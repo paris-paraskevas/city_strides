@@ -26,6 +26,7 @@ environment:
 # consider running `flutter pub upgrade --major-versions`. Alternatively,
 # dependencies can be manually updated by changing the version numbers below to
 # the latest version available on pub.dev. To see which dependencies have newer
+
 # versions available, run `flutter pub outdated`.
 dependencies:
   flutter:
@@ -39,12 +40,6 @@ dependencies:
   # Map Display
   flutter_map: ^7.0.2
   latlong2: ^0.9.1
-
-  # Firebase
-  firebase_core: ^3.12.1
-  firebase_auth: ^5.5.1
-  cloud_firestore: ^5.6.5
-  firebase_storage: ^12.4.5
 
   # Location
   geolocator: ^13.0.2
