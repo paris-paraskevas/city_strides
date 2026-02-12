@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "866386657030",
+    "project_id": "city-strides-4f1e0",
+    "storage_bucket": "city-strides-4f1e0.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:866386657030:android:5bdf8bc019722fec77e887",
+        "android_client_info": {
+          "package_name": "com.example.city_strides"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAWqesXSbUA9fSKEEzJZiikyHBsroqseVU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
