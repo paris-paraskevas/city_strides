@@ -14,11 +14,11 @@ class CityModel {
   final int totalRoadSegments;          // Road segments in this city
   final double totalRoadLengthMeters;   // Total length of all roads in meters
 
-// --- Constructor ---
-// cityId, name, and country are required because a city must have an identity.
-// boundaryPolygon defaults to an empty list - and gets populated when we fetch
-// data from the Overpass API.
-// Road counts default to 0 - they're calculated after fetching road data.
+  // --- Constructor ---
+  // cityId, name, and country are required because a city must have an identity.
+  // boundaryPolygon defaults to an empty list - and gets populated when we fetch
+  // data from the Overpass API.
+  // Road counts default to 0 - they're calculated after fetching road data.
   CityModel({
     required this.cityId,
     required this.name,
@@ -28,10 +28,10 @@ class CityModel {
     this.totalRoadLengthMeters = 0.0,
   });
 
-// --- fromJson ---
-// Converts from JSON Map to a CityModel
-// The boundaryPolygon requires special handling: each point in the JSON
-// is like a map like {'lat': 42.69, 'lng': 23.32}, which we convert to LatLng.
+  // --- fromJson ---
+  // Converts from JSON Map to a CityModel
+  // The boundaryPolygon requires special handling: each point in the JSON
+  // is like a map like {'lat': 42.69, 'lng': 23.32}, which we convert to LatLng.
   factory CityModel.fromJson(Map<String, dynamic> json) {
     return CityModel(
       cityId: json['cityId'] as String? ?? '',
@@ -51,9 +51,9 @@ class CityModel {
     );
   }
 
-// --- toJson ---
-// Converts this CityModel into a Map for storage or sending to a backend.
-// Each LatLng point becomes a simple map with 'lat' and 'lng' keys.
+  // --- toJson ---
+  // Converts this CityModel into a Map for storage or sending to a backend.
+  // Each LatLng point becomes a simple map with 'lat' and 'lng' keys.
   Map<String, dynamic> toJson() {
     return{
       'cityId': cityId,
@@ -70,7 +70,7 @@ class CityModel {
     };
 
   }
-// --- copyWith ---
+  // --- copyWith ---
   CityModel copyWith({
     String? cityId,
     String? name,
