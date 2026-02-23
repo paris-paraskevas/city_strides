@@ -9,7 +9,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:latlong2/latlong.dart';
 import '../models/road_segment_model.dart';
-import 'city_provider.dart';
 
 // --- State class ---
 // Holds the list of road segments for the current city,
