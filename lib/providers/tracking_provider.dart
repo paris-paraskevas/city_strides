@@ -16,9 +16,7 @@
 // Later: road_matching_service.dart will handle proper GPS-to-road
 // snapping with point-to-line distance calculations.
 
-import 'dart:convert';
 import 'dart:math';
-import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
@@ -80,6 +78,7 @@ class TrackingNotifier extends StateNotifier<TrackingState> {
   // 25 meters accounts for GPS inaccuracy ( which is typically
   // 3 - 10 meters outside) plus the fact that the user might be
   // walking on a sidewalk next to the road, not on the road itself.
+  static const double _matchThresholdMeters = 25.0;
 
   Future<void> startTracking() async {
     await _ref.read(locationProvider.notifier).startTracking();
@@ -114,7 +113,7 @@ class TrackingNotifier extends StateNotifier<TrackingState> {
     if (nearestResult == null) return;
 
     final nearestSegment = nearestResult.segment;
-    final distance = nearestSegment.distance;
+    final distance = nearestResult.distance;
 
     // Only mark as walked if within threshold
     if (distance <= _matchThresholdMeters) {
@@ -215,8 +214,8 @@ class TrackingNotifier extends StateNotifier<TrackingState> {
   // utility functions.
   double _calculateDistance(
       double lat1,
-      double lat2,
       double lon1,
+      double lat2,
       double lon2,
   ) {
     const double earthRadius = 6371000; // meters
