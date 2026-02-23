@@ -6,7 +6,6 @@
 // Currently uses hardcoded mock road segments for development.
 // Later: will call overpass_service.dart to fetch real road data.
 
-import 'package:city_strides/providers/tracking_provider.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:latlong2/latlong.dart';
 import '../models/road_segment_model.dart';
