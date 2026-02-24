@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'providers/auth_provider.dart';
 import 'screens/debug/debug_screen.dart';
+import 'screens/map/map_screen.dart';
 
 class CityStridesApp extends ConsumerWidget {
   const CityStridesApp({super.key});
@@ -28,7 +29,7 @@ class CityStridesApp extends ConsumerWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
         useMaterial3: true,
       ),
-      home: const DebugScreen(),
+      home: const MapScreen(),
     );
   }
 }

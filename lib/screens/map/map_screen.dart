@@ -147,20 +147,61 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         title: const Text('City Strides'),
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
       ),
-      // For now, just display a placeholder message showing
-      // what data is loaded. We'll replace this with the actual
-      // FlutterMap widget in Step 2.
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Text('City: ${cityState.currentCity?.name ?? "Loading..."}'),
-            Text('Roads: ${roadState.segments.length} segments'),
-            Text('GPS: ${locationState.currentPosition != null ? "Active" : "Waiting..."}'),
-            Text('Tracking: ${trackingState.isActive ? "On" : "Off"}'),
-          ],
+
+      // --- The Map ---
+      // FlutterMap is the main map widget. It takes:
+      //   - mapController: our controller for programmatic map movement
+      //   - options: configuration (centre, zoom, limits)
+      //   - children: the visual layers stacked on top of each other
+      //
+      // The children list is ordered bottom-to-top:
+      //   First item = bottom layer (tiles), last item = top layer (markers).
+      //   This is like stacking transparent sheets on an overhead projector.
+      body: FlutterMap(
+        mapController: _mapController,
+        options: MapOptions(
+          // initialCenter: where the map is centred when it first appears.
+          // We use our default Athens coordinates for now.
+          // Later, we'll update this to use the user's actual GPS position.
+          initialCenter: _defaultCentre,
+
+          // initialZoom: how zoomed in the map starts.
+          // 15.0 shows individual streets — good for a walking app.
+          initialZoom: _defaultZoom,
+
+          // minZoom / maxZoom: prevents the user from zooming too far
+          // in or out. Zoom 3 shows continents, zoom 18 shows buildings.
+          // We limit the range to keep the experience sensible for a
+          // city-scale walking app.
+          minZoom: 3.0,
+          maxZoom: 18.0,
         ),
-      ),
+        children: [
+          // --- Layer 1: OpenStreetMap Tiles ---
+          // This is the background map — streets, buildings, parks, water.
+          // Without this layer, you'd see a blank grey canvas.
+          //
+          // urlTemplate: the URL pattern for downloading tile images.
+          //   {s} = subdomain (a, b, or c) — distributes requests across
+          //         multiple servers so one server doesn't get overloaded.
+          //   {z} = zoom level (0-18)
+          //   {x} = tile column number
+          //   {y} = tile row number
+          //   flutter_map fills these in automatically based on what the
+          //   user is looking at.
+          //
+          // userAgentPackageName: identifies your app to OpenStreetMap's
+          //   servers. OSM is free but asks that apps identify themselves
+          //   so they can contact you if your app sends too many requests.
+          //   This is just good manners — using a fake or missing name
+          //   could get your app's requests blocked.
+          TileLayer(
+            urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+            userAgentPackageName: 'com.example.city_strides',
+          ),
+
+        ],
+      )
     );
   }
 }
