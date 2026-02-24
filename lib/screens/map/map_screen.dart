@@ -199,7 +199,146 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
             userAgentPackageName: 'com.example.city_strides',
           ),
+          // --- Layer 2: City Boundary Polygon ---
+          // Draws the city boundary as a semi-transparent overlay.
+          // This shows the user which area "counts" for their city completion.
+          //
+          // We only draw it if a city is loaded (currentCity != null).
+          // The "if" inside a list is a Dart feature called a
+          // "collection if" — it conditionally includes an item in a list.
+          // It's like saying: "only add this layer if we have city data."
+          //
+          // Without the if-check, we'd crash trying to access
+          // boundaryPolygon on a null city when the screen first loads
+          // (before loadMockCity() completes in addPostFrameCallback).
+          if (cityState.currentCity != null)
+            PolygonLayer(
+              // polygons: a list of Polygon objects to draw.
+              // We only have one city at a time, so the list has one item.
+              polygons: [
+                Polygon(
+                  // points: the LatLng coordinates that define the shape.
+                  // flutter_map connects them in order and closes the shape
+                  // automatically (connects the last point back to the first).
+                  points: cityState.currentCity!.boundaryPolygon,
 
+                  // color: the fill colour inside the polygon.
+                  // .withValues(alpha: 0.1) makes it nearly transparent.
+                  // We use a very light fill so the map tiles underneath
+                  // remain visible. Without transparency, the polygon would
+                  // cover the map completely and you couldn't see streets.
+                  //
+                  // Why withValues(alpha:) instead of withOpacity()?
+                  // withOpacity is older and works fine, but withValues is
+                  // the newer recommended approach in Flutter. alpha: 0.1
+                  // means 10% opaque (90% transparent).
+                  color: Colors.blue.withValues(alpha: 0.1),
+
+                  // borderColor: the outline colour of the polygon.
+                  // A solid blue border makes the boundary clearly visible
+                  // even though the fill is very faint.
+                  borderColor: Colors.blue,
+
+                  // borderStrokeWidth: how thick the outline is in pixels.
+                  // 2.0 is visible without being overwhelming.
+                  borderStrokeWidth: 2.0,
+                ),
+              ],
+            ),
+          // --- Layer 3: Road Segments ---
+          // Draws each road segment as a coloured line on the map.
+          // Green = walked, grey = not yet walked.
+          //
+          // We only draw roads if there are segments loaded.
+          // roadState.segments is the list of RoadSegmentModel objects
+          // that road_provider loaded (our 3 mock Athens streets).
+          if (roadState.segments.isNotEmpty)
+            PolylineLayer(
+              polylines: roadState.segments.map((segment) {
+                // Check if this road has been walked by looking up its ID
+                // in the tracking provider's walked segment set.
+                // This is the Set<String> we built in Chat 5 — it gives
+                // O(1) lookup speed, meaning it's instant regardless of
+                // how many segments have been walked.
+                final bool isWalked = trackingState.walkedSegmentIds.contains(
+                  segment.segmentId,
+                );
+
+                return Polyline(
+                  // points: the LatLng coordinates that make up this road.
+                  // flutter_map draws a line connecting them in order.
+                  // Our mock roads have 3 points each, so you'll see
+                  // a line with two bends.
+                  points: segment.polyline,
+
+                  // color: green if walked, grey if not.
+                  // This is a ternary expression: condition ? valueIfTrue : valueIfFalse
+                  // It's a compact way to write an if/else that returns a value.
+                  color: isWalked ? Colors.green : Colors.grey,
+
+                  // strokeWidth: how thick the road line is in pixels.
+                  // 4.0 makes roads clearly visible without dominating the map.
+                  // Walked roads are slightly thicker (5.0) to make them
+                  // stand out more — a subtle visual reward for progress.
+                  strokeWidth: isWalked ? 5.0 : 4.0,
+                );
+              }).toList(),
+            ),
+          // --- Layer 4: User GPS Position ---
+          // Shows a blue dot where the user currently is.
+          //
+          // We only show it if we have a GPS position.
+          // locationState.currentPosition is null until the GPS
+          // gets its first fix (which can take a few seconds after
+          // permission is granted).
+          if (locationState.currentPosition != null)
+            MarkerLayer(
+                markers: [
+                  Marker(
+                    // point: the GPS coordinate where the marker appears.
+                    // We create a LatLng from the geolocator Position object.
+                    //
+                    // locationState.currentPosition is a geolocator Position,
+                    // which has .latitude and .longitude properties.
+                    // LatLng is flutter_map's coordinate type.
+                    // They represent the same thing (a point on Earth) but
+                    // come from different packages, so we convert.
+                    point: LatLng(
+                      locationState.currentPosition!.latitude,
+                      locationState.currentPosition!.longitude,
+                    ),
+
+                    // width and height: the size of the marker widget in pixels.
+                    // This defines the "hit box" — how much space the marker
+                    // occupies on screen. The actual visual (our circle below)
+                    // should fit within these dimensions.
+                    width: 20.0,
+                    height: 20.0,
+
+                    // child: the widget to display at this coordinate.
+                    // This can be ANY Flutter widget — an Icon, an Image,
+                    // a Container, even a button.
+                    //
+                    // We use a Container styled as a circle:
+                    //   - BoxDecoration with shape: BoxShape.circle makes
+                    //     the container round instead of rectangular.
+                    //   - Blue fill with a white border creates the classic
+                    //     "GPS dot" look you see in Google Maps and similar apps.
+                    //   - The border gives contrast against any map background
+                    //     colour, so the dot is always visible whether it's
+                    //     over a park (green), water (blue), or road (white).
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: Colors.blue,
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: Colors.white,
+                          width: 2.0,
+                        )
+                      ),
+                    )
+                  )
+            ])
         ],
       )
     );
