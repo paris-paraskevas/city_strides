@@ -18,6 +18,7 @@ import '../../providers/city_provider.dart';
 import '../../providers/road_provider.dart';
 import '../../providers/location_provider.dart';
 import '../../providers/tracking_provider.dart';
+import '../debug/debug_screen.dart';
 // --- Widget class ---
 // This is the "outer shell". Its only job is to create the State object.
 // Think of it as the label on a box — actual contents are in _MapScreenState.
