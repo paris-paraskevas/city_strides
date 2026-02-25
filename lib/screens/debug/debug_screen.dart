@@ -73,16 +73,6 @@ class DebugScreen extends ConsumerWidget {
               child: const Text('Load Mock Athens Data'),
             ),
 
-            const SizedBox(height: 24),
-
-            ElevatedButton(
-              onPressed: () {
-                ref.read(cityProvider.notifier).loadCityByRelationId(54580374);
-                ref.read(roadProvider.notifier).loadRoadsForCity(relationId: 54580374, cityId: 'osm_54580374');
-              },
-              child: const Text('Load Mock Melissokhori Data'),
-            ),
-
             const SizedBox(height: 12),
 
             ElevatedButton(
