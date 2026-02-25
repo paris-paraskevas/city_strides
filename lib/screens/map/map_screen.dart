@@ -102,15 +102,15 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   // Separated into its own method for clarity.
   // This runs once after the screen first appears.
   void _loadInitialData() {
-    // Athens, Greece — OSM relation ID 187890
-    // https://www.openstreetmap.org/relation/187890
-    const int athensRelationId = 187890;
+    // Athens, Greece — OSM relation ID 1370736
+    // https://www.openstreetmap.org/relation/1370736
+    const int athensRelationId = 1370736;
 
     // Load real Athens city boundary from Overpass API
     ref.read(cityProvider.notifier).loadCityByRelationId(athensRelationId);
 
     // Load real road segments for Athens from Overpass API
-    // cityId must match what fetchCityBoundary produces: 'osm_187890'
+    // cityId must match what fetchCityBoundary produces: 'osm_1370736'
     ref.read(roadProvider.notifier).loadRoadsForCity(
       relationId: athensRelationId,
       cityId: 'osm_$athensRelationId',
