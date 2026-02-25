@@ -151,10 +151,21 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     final trackingState = ref.watch(trackingProvider);
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('City Strides'),
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-      ),
+        appBar: AppBar(
+          title: const Text('City Strides'),
+          backgroundColor: Theme.of(context).colorScheme.inversePrimary,
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.bug_report),
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const DebugScreen()),
+                );
+              },
+            ),
+          ],
+        ),
 
       // --- The Map ---
       // FlutterMap is the main map widget. It takes:
