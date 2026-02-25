@@ -1,133 +1,159 @@
 // Manages which city the user is currently in.
 //
 // Depends on locationProvider to get the user's GPS position.
-// Uses city boundary data to determine which city contains that position
+// Uses OverpassService to fetch real city boundary data from OpenStreetMap.
 //
-// Currently uses a hardcoded city for development.
-// Later: will query the Overpass API for city boundaries and use
-// point-in-polygon checks to detect the current city.
+// Two ways to load a city:
+//   1. loadCityByRelationId() — fetch by OSM relation ID (for testing/manual)
+//   2. detectCity() — auto-detect from GPS position (future implementation)
 
-  import 'package:flutter_riverpod/flutter_riverpod.dart';
-  import 'package:latlong2/latlong.dart';
-  import '../models/city_model.dart';
-  import 'location_provider.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../models/city_model.dart';
+import '../services/overpass_service.dart';
+import 'location_provider.dart';
 
-  // --- State class ---
-  // Holds the current city (if detected) plus status information
-  class CityState {
-    final CityModel? currentCity;
-    final bool isLoading;
-    final String? errorMessage;
+// --- State class ---
+// Holds the current city (if detected) plus status information.
+// UNCHANGED from before — the UI code that reads CityState doesn't
+// need to change at all. This is the benefit of the service layer pattern:
+// the data source changes, but the state shape stays the same.
+class CityState {
+  final CityModel? currentCity;
+  final bool isLoading;
+  final String? errorMessage;
 
-    const CityState({
-      this.currentCity,
-      this.isLoading = false,
-      this.errorMessage,
-    });
+  const CityState({
+    this.currentCity,
+    this.isLoading = false,
+    this.errorMessage,
+  });
 
-    CityState copyWith({
-      CityModel? currentCity,
-      bool? isLoading,
-      String? errorMessage,
-    }) {
-      return CityState(
-        currentCity: currentCity ?? this.currentCity,
-        isLoading: isLoading ?? this.isLoading,
-        errorMessage: errorMessage ?? this.errorMessage,
-      );
-    }
+  CityState copyWith({
+    CityModel? currentCity,
+    bool? isLoading,
+    String? errorMessage,
+  }) {
+    return CityState(
+      currentCity: currentCity ?? this.currentCity,
+      isLoading: isLoading ?? this.isLoading,
+      errorMessage: errorMessage ?? this.errorMessage,
+    );
   }
-  // --- State Notifier ---
-  class CityNotifier extends StateNotifier<CityState> {
-    // The Ref lets this provider read other providers.
-    // This is how providers communicate with each other in Riverpod
-    // We store it so we can access locationProvider from our methods.
-    final Ref _ref;
+}
 
-    CityNotifier(this._ref) : super(const CityState());
+// --- State Notifier ---
+class CityNotifier extends StateNotifier<CityState> {
+  final Ref _ref;
 
-    // -- Load mock city for development ---
-    // Creates a hardcoded Athens city for testing.
-    // Later: this will be replaced by real Overpass API lookups.
-    //
-    // The boundary polygon is a simplified rectangle - the real one
-    // from OpenStreetMap will have hundreds of points
-    void loadMockCity() {
-      state = state.copyWith(
-        currentCity: CityModel(
-            cityId: 'athens_gr',
-            name: 'Athens',
-            country: 'Greece',
-            boundaryPolygon: [
-              LatLng(37.95, 23.70),   // NW corner
-              LatLng(37.95, 23.76),   // NE corner
-              LatLng(37.97, 23.76),   // SE corner
-              LatLng(37.97, 23.70),   // SW corner
-            ],
-          totalRoadSegments: 0,       // Unknown until we fetch road data
-          totalRoadLengthMeters: 0.0,
-        ),
-        isLoading: false,
+  // The service instance that handles Overpass API communication.
+  // We create it once and reuse it for all requests.
+  //
+  // New concept — Dependency injection (simple version):
+  // The notifier "owns" the service. This keeps the service lifetime
+  // tied to the provider. Later, if we wanted to swap in a mock service
+  // for testing, we'd pass it in via the constructor instead.
+  final OverpassService _overpassService = OverpassService();
+
+  CityNotifier(this._ref) : super(const CityState());
+
+  // --- Load city by OSM relation ID ---
+  // Fetches a specific city's boundary from Overpass API.
+  // This is our primary method for now (Option C from our discussion).
+  //
+  // [relationId] — the OpenStreetMap relation ID.
+  //   Athens, Greece = 187890
+  //   You can find IDs at: https://www.openstreetmap.org
+  //
+  // New concept — try/catch with custom exceptions:
+  // The service throws OverpassException with a human-readable message.
+  // We catch it here and store the message in errorMessage so the UI
+  // can display it. The "on OverpassException" part means we only
+  // catch our specific exception type — other errors bubble up normally.
+  Future<void> loadCityByRelationId(int relationId) async {
+    // Set loading state — the UI will show a loading indicator
+    state = state.copyWith(isLoading: true, errorMessage: null);
+
+    try {
+      // Call the Overpass service to fetch the real boundary
+      final city = await _overpassService.fetchCityBoundary(
+        relationId: relationId,
       );
-    }
 
-    // --- Detect city from GPS position ---
-    // This is the method that will eventually:
-    //  1. Read the user's current position from locationProvider
-    //  2. Query the Overpass API for city boundaries near that position
-    //  3. Check which boundary polygon contains the position
-    //  4. Set the matching city as currentCity
-    //
-    //  For now, it just loads the mock city.
-    Future<void> detectCity() async {
-      state = state.copyWith(isLoading: true);
-
-      // Read current location (one-time)
-      final locationState = _ref.read(locationProvider);
-
-      if(locationState.currentPosition == null) {
-        state = state.copyWith(
-          isLoading: false,
-          errorMessage: 'No GPS position available. Cannot detect city.',
-        );
-        return;
-      }
-
-      // TODO: Replace with real Overpass API city boundary lookup
-      // For now, just load the mock city regardless of position
-      loadMockCity();
-    }
-
-    // --- Manually set city ---
-    // Allows the user to select a city from a list instead of
-    // relying on GPS detection. Useful for browsing other cities'
-    // progress or when GPS detection doesn't work.
-    void setCity(CityModel city) {
+      // Success — update state with the real city data
       state = state.copyWith(
         currentCity: city,
         isLoading: false,
-        errorMessage: null,
       );
-    }
-
-    // --- Clear city ---
-    // Resets to no city selected.
-    void clearCity() {
-      state = const CityState();
+    } on OverpassException catch (e) {
+      // Overpass-specific error — show the message to the user
+      state = state.copyWith(
+        isLoading: false,
+        errorMessage: e.message,
+      );
+    } catch (e) {
+      // Unexpected error — network failure, JSON parse error, etc.
+      state = state.copyWith(
+        isLoading: false,
+        errorMessage: 'Failed to load city: $e',
+      );
     }
   }
 
+  // --- Detect city from GPS position ---
+  // This will eventually:
+  //   1. Read the user's current position from locationProvider
+  //   2. Query Overpass for city boundaries near that position
+  //   3. Set the matching city as currentCity
+  //
+  // For now, it falls back to loading Athens by relation ID.
+  // We'll implement real GPS-based detection in a future chat.
+  Future<void> detectCity() async {
+    // Read current location (one-time)
+    final locationState = _ref.read(locationProvider);
+
+    if (locationState.currentPosition == null) {
+      state = state.copyWith(
+        isLoading: false,
+        errorMessage: 'No GPS position available. Cannot detect city.',
+      );
+      return;
+    }
+
+    // TODO: Replace with real reverse-geocoding city detection.
+    // For now, load Athens as the default city.
+    await loadCityByRelationId(187890);
+  }
+
+  // --- Manually set city ---
+  // Allows the user to select a city from a list instead of
+  // relying on GPS detection. Useful for browsing other cities'
+  // progress or when GPS detection doesn't work.
+  void setCity(CityModel city) {
+    state = state.copyWith(
+      currentCity: city,
+      isLoading: false,
+      errorMessage: null,
+    );
+  }
+
+  // --- Clear city ---
+  // Resets to no city selected.
+  void clearCity() {
+    state = const CityState();
+  }
+}
+
 // --- Provider ---
-// Notice the (ref) parameter - we pass it to CityNotifier so it can
-// access other providers. This is the standard Riverpod pattern for
-// provider-to-provider communication.
-//
 // Usage:
 //    final cityState = ref.watch(cityProvider);
 //    final cityName = cityState.currentCity?.name ?? 'No city';
 //
+//    // Load Athens by relation ID:
+//    ref.read(cityProvider.notifier).loadCityByRelationId(187890);
+//
+//    // Or auto-detect from GPS:
 //    ref.read(cityProvider.notifier).detectCity();
 final cityProvider =
-    StateNotifierProvider<CityNotifier, CityState>((ref) {
+StateNotifierProvider<CityNotifier, CityState>((ref) {
   return CityNotifier(ref);
 });
