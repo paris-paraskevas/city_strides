@@ -232,13 +232,20 @@ out geom;
       ) {
     // Extract city name and country from OSM tags
     final tags = element['tags'] as Map<String, dynamic>? ?? {};
-    final cityName = (tags['name:en'] as String?) ??
+    // 'sorting_name' gives clean short names (e.g. "Athens" not "Municipality of Athens")
+    // Falls back through increasingly verbose name tags
+    final cityName = (tags['sorting_name'] as String?) ??
+        (tags['name:en'] as String?) ??
         (tags['name'] as String?) ??
         'Unknown City';
+
+    // Country is rarely tagged on city-level relations.
+    // We check several possible tags, but this will often be empty.
+    // TODO: Fetch country from parent relation or reverse geocoding later.
     final country = (tags['ISO3166-1:alpha2'] as String?) ??
         (tags['ISO3166-1'] as String?) ??
         (tags['is_in:country'] as String?) ??
-        (tags['addr:country'] as String?) ??
+        (tags['is_in:country_code'] as String?) ??
         '';
 
     // Extract boundary coordinates from relation members.

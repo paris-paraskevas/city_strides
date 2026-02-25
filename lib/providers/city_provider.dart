@@ -2,21 +2,21 @@
 //
 // Depends on locationProvider to get the user's GPS position.
 // Uses OverpassService to fetch real city boundary data from OpenStreetMap.
+// Uses CacheService to store/retrieve city data locally.
 //
-// Two ways to load a city:
-//   1. loadCityByRelationId() — fetch by OSM relation ID (for testing/manual)
-//   2. detectCity() — auto-detect from GPS position (future implementation)
+// Data flow:
+//   1. Check cache for city data
+//   2. If cached → load from disk (instant)
+//   3. If not cached → fetch from Overpass API → save to cache → display
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/city_model.dart';
 import '../services/overpass_service.dart';
+import '../services/cache_service.dart';
 import 'location_provider.dart';
 
 // --- State class ---
-// Holds the current city (if detected) plus status information.
-// UNCHANGED from before — the UI code that reads CityState doesn't
-// need to change at all. This is the benefit of the service layer pattern:
-// the data source changes, but the state shape stays the same.
+// UNCHANGED — no UI changes needed.
 class CityState {
   final CityModel? currentCity;
   final bool isLoading;
@@ -44,54 +44,59 @@ class CityState {
 // --- State Notifier ---
 class CityNotifier extends StateNotifier<CityState> {
   final Ref _ref;
-
-  // The service instance that handles Overpass API communication.
-  // We create it once and reuse it for all requests.
-  //
-  // New concept — Dependency injection (simple version):
-  // The notifier "owns" the service. This keeps the service lifetime
-  // tied to the provider. Later, if we wanted to swap in a mock service
-  // for testing, we'd pass it in via the constructor instead.
   final OverpassService _overpassService = OverpassService();
+  final CacheService _cacheService = CacheService();
 
   CityNotifier(this._ref) : super(const CityState());
 
   // --- Load city by OSM relation ID ---
-  // Fetches a specific city's boundary from Overpass API.
-  // This is our primary method for now (Option C from our discussion).
-  //
-  // [relationId] — the OpenStreetMap relation ID.
-  //   Athens, Greece = 187890
-  //   You can find IDs at: https://www.openstreetmap.org
-  //
-  // New concept — try/catch with custom exceptions:
-  // The service throws OverpassException with a human-readable message.
-  // We catch it here and store the message in errorMessage so the UI
-  // can display it. The "on OverpassException" part means we only
-  // catch our specific exception type — other errors bubble up normally.
+  // Now with caching:
+  //   1. Build the cityId from the relation ID
+  //   2. Check if city.json exists in cache
+  //   3. If yes → load from cache (fast, no internet needed)
+  //   4. If no → fetch from Overpass API → save to cache
   Future<void> loadCityByRelationId(int relationId) async {
-    // Set loading state — the UI will show a loading indicator
     state = state.copyWith(isLoading: true, errorMessage: null);
 
+    // The cityId format matches what OverpassService produces
+    final cityId = 'osm_$relationId';
+
     try {
-      // Call the Overpass service to fetch the real boundary
+      // Step 1: Check cache
+      if (await _cacheService.isCityCached(cityId)) {
+        // Cache hit — load from disk
+        final cachedCity = await _cacheService.loadCachedCity(cityId);
+
+        if (cachedCity != null) {
+          state = state.copyWith(
+            currentCity: cachedCity,
+            isLoading: false,
+          );
+          return; // Done — no need to call the API
+        }
+        // If loadCachedCity returned null (corrupt file), fall through
+        // to fetch from API below.
+      }
+
+      // Step 2: Cache miss — fetch from Overpass API
       final city = await _overpassService.fetchCityBoundary(
         relationId: relationId,
       );
 
-      // Success — update state with the real city data
+      // Step 3: Save to cache for next time
+      await _cacheService.saveCity(city);
+
+      // Step 4: Update state
       state = state.copyWith(
         currentCity: city,
         isLoading: false,
       );
     } on OverpassException catch (e) {
-      // Overpass-specific error — show the message to the user
       state = state.copyWith(
         isLoading: false,
         errorMessage: e.message,
       );
     } catch (e) {
-      // Unexpected error — network failure, JSON parse error, etc.
       state = state.copyWith(
         isLoading: false,
         errorMessage: 'Failed to load city: $e',
@@ -100,15 +105,8 @@ class CityNotifier extends StateNotifier<CityState> {
   }
 
   // --- Detect city from GPS position ---
-  // This will eventually:
-  //   1. Read the user's current position from locationProvider
-  //   2. Query Overpass for city boundaries near that position
-  //   3. Set the matching city as currentCity
-  //
-  // For now, it falls back to loading Athens by relation ID.
-  // We'll implement real GPS-based detection in a future chat.
+  // Future implementation — currently falls back to Athens.
   Future<void> detectCity() async {
-    // Read current location (one-time)
     final locationState = _ref.read(locationProvider);
 
     if (locationState.currentPosition == null) {
@@ -120,14 +118,10 @@ class CityNotifier extends StateNotifier<CityState> {
     }
 
     // TODO: Replace with real reverse-geocoding city detection.
-    // For now, load Athens as the default city.
-    await loadCityByRelationId(187890);
+    await loadCityByRelationId(1370736);
   }
 
   // --- Manually set city ---
-  // Allows the user to select a city from a list instead of
-  // relying on GPS detection. Useful for browsing other cities'
-  // progress or when GPS detection doesn't work.
   void setCity(CityModel city) {
     state = state.copyWith(
       currentCity: city,
@@ -137,7 +131,6 @@ class CityNotifier extends StateNotifier<CityState> {
   }
 
   // --- Clear city ---
-  // Resets to no city selected.
   void clearCity() {
     state = const CityState();
   }
@@ -146,13 +139,7 @@ class CityNotifier extends StateNotifier<CityState> {
 // --- Provider ---
 // Usage:
 //    final cityState = ref.watch(cityProvider);
-//    final cityName = cityState.currentCity?.name ?? 'No city';
-//
-//    // Load Athens by relation ID:
-//    ref.read(cityProvider.notifier).loadCityByRelationId(187890);
-//
-//    // Or auto-detect from GPS:
-//    ref.read(cityProvider.notifier).detectCity();
+//    ref.read(cityProvider.notifier).loadCityByRelationId(1370736);
 final cityProvider =
 StateNotifierProvider<CityNotifier, CityState>((ref) {
   return CityNotifier(ref);
