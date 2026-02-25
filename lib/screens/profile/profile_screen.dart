@@ -14,6 +14,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/progress_provider.dart';
 import '../../providers/city_provider.dart';
+import 'settings_screen.dart';
 
 class ProfileScreen extends ConsumerWidget {
   const ProfileScreen({super.key});
@@ -60,11 +61,20 @@ class ProfileScreen extends ConsumerWidget {
           IconButton(
             icon: const Icon(Icons.settings),
             onPressed: () {
-              // TODO: Navigate to SettingsScreen when built
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Settings — coming soon!'),
-                  duration: Duration(seconds: 2),
+              // Navigator.push: adds a new screen on top of the current one.
+              // Think of it like stacking cards — the Settings screen goes
+              // on top of the Profile screen. The user can go back by
+              // pressing the back arrow (which Flutter adds automatically)
+              // or swiping back on Android.
+              //
+              // MaterialPageRoute: wraps the destination screen with
+              // Material Design transition animations (slide in from right).
+              // The 'builder' parameter is a function that returns the
+              // widget to display — in our case, the SettingsScreen.
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const SettingsScreen(),
                 ),
               );
             },
