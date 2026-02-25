@@ -65,7 +65,7 @@ class SettingsScreen extends ConsumerWidget {
                   : 'Manual — start/stop tracking yourself',
             ),
             value: user?.trackingMode == 'passive',
-            activeColor: Colors.teal,
+            activeThumbColor: Colors.teal,
             // onChanged receives true (switched ON) or false (switched OFF).
             // We convert that boolean back to our string format.
             //
@@ -154,7 +154,7 @@ class SettingsScreen extends ConsumerWidget {
                   : 'Distances shown in miles',
             ),
             value: settings.units == 'km',
-            activeColor: Colors.teal,
+            activeThumbColor: Colors.teal,
             onChanged: (bool isKm) {
               ref.read(settingsProvider.notifier).setUnits(
                 isKm ? 'km' : 'miles',
