@@ -215,7 +215,7 @@ class SettingsScreen extends ConsumerWidget {
           const SizedBox(height: 24),
           Center(
             child: Text(
-              'City Strides v0.10.0',
+              'City Strides v0.14.0',
               style: TextStyle(
                 fontSize: 13,
                 color: Colors.grey.shade500,

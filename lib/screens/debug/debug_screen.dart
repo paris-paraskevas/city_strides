@@ -44,16 +44,20 @@ class DebugScreen extends ConsumerWidget {
             _section('City'),
             _row('Detected',     (city.currentCity != null).toString()),
             _row('City Name',    city.currentCity?.name ?? 'null'),
+            _row('City ID',      city.currentCity?.cityId ?? 'null'),
             _row('Country',      city.currentCity?.country ?? 'null'),
             _row('Boundary pts', city.currentCity?.boundaryPolygon.length.toString() ?? 'null'),
             _row('Loading',      city.isLoading.toString()),
+            _row('Error',        city.errorMessage ?? 'none'),
 
             _section('Roads'),
             _row('Segments loaded', roads.segments.length.toString()),
             _row('Loading',         roads.isLoading.toString()),
+            _row('Error',           roads.errorMessage ?? 'none'),
 
             _section('Tracking'),
             _row('Is active',       tracking.isActive.toString()),
+            _row('Grid ready',      tracking.isGridReady.toString()),
             _row('Segments walked', tracking.walkedSegmentIds.length.toString()),
 
             _section('Progress'),
@@ -65,12 +69,33 @@ class DebugScreen extends ConsumerWidget {
 
             const SizedBox(height: 24),
 
+            // --- Load Larissa Centre Data ---
+            // Uses the custom boundary approach: ring road streets + bbox
             ElevatedButton(
               onPressed: () {
-                ref.read(cityProvider.notifier).loadCityByRelationId(1370736);
-                ref.read(roadProvider.notifier).loadRoadsForCity(relationId: 1370736, cityId: 'osm_1370736');
+                ref.read(cityProvider.notifier).loadCustomCity(
+                  cityId: 'larissa_centre',
+                  name: 'Larissa Centre',
+                  country: 'Greece',
+                  streetNames: const [
+                    'Κίμωνος Σανδράκη',
+                    'Αθανασίου Λάγου',
+                    'Ηρώων Πολυτεχνείου',
+                  ],
+                  south: 39.625,
+                  west: 22.400,
+                  north: 39.650,
+                  east: 22.435,
+                );
+                ref.read(roadProvider.notifier).loadRoadsInBbox(
+                  cityId: 'larissa_centre',
+                  south: 39.625,
+                  west: 22.400,
+                  north: 39.650,
+                  east: 22.435,
+                );
               },
-              child: const Text('Load Mock Athens Data'),
+              child: const Text('Load Larissa Centre Data'),
             ),
 
             const SizedBox(height: 12),

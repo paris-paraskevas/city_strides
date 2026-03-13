@@ -4,24 +4,27 @@
 // Depends on:
 //    - locationProvider: for GPS position updates
 //    - roadProvider: for the list of road segments to match against
+//    - RoadMatchingService: spatial grid for fast GPS-to-road matching
+//
 // Flow:
-//  1. GPS position arrives from locationProvider
-//  2. This provider checks which road segment is closest
-//  3. If the user is close enough to a road (within threshold),
-//     that segment is marked as "walked"
-//  4. A WalkedSegmentModel record is created
+//  1. Roads load → buildGrid() indexes them into spatial cells
+//  2. GPS position arrives (piped in by map_screen via ref.listen)
+//  3. processPosition() uses the spatial grid to find the nearest road
+//  4. If the user is close enough (within 25m), that segment is marked "walked"
 //  5. progress_provider reads this data to calculate completion %
 //
-// Currently uses a simplified distance check for road matching.
-// Later: road_matching_service.dart will handle proper GPS-to-road
-// snapping with point-to-line distance calculations.
+// PERFORMANCE NOTE:
+// The old approach looped through ALL segments on every GPS update (O(n)).
+// The spatial grid reduces this to O(1) lookup + O(k) local check,
+// where k is typically 10-30 nearby segments. This prevents UI freezing
+// with thousands of real road segments.
 
 import 'dart:math';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:latlong2/latlong.dart';
 import '../models/walked_segment_model.dart';
 import '../models/road_segment_model.dart';
+import '../services/road_matching_service.dart';
 import 'location_provider.dart';
 import 'road_provider.dart';
 
@@ -31,7 +34,7 @@ class TrackingState {
   // A Set (not a List) because:
   //    - Each segment should only appear once (no duplicates)
   //    - Checking "has this segment been walked?" is very fast with a Set
-  //    (0(1) lookup vs 0(n) for a List - meaning a Set checks instantly
+  //    (O(1) lookup vs O(n) for a List - meaning a Set checks instantly
   //    regardless of size, while a List gets slower as it grows)
   final Set<String> walkedSegmentIds;
 
@@ -42,25 +45,32 @@ class TrackingState {
   // Is active tracking currently running?
   final bool isActive;
 
+  // Is the spatial grid ready for matching?
+  // This becomes true after buildGrid() completes.
+  final bool isGridReady;
+
   final String? errorMessage;
 
-  const TrackingState ({
+  const TrackingState({
     this.walkedSegmentIds = const {},
-    this.walkedSegments = const[],
+    this.walkedSegments = const [],
     this.isActive = false,
+    this.isGridReady = false,
     this.errorMessage,
   });
 
-  TrackingState copyWith ({
+  TrackingState copyWith({
     Set<String>? walkedSegmentIds,
     List<WalkedSegmentModel>? walkedSegments,
     bool? isActive,
+    bool? isGridReady,
     String? errorMessage,
-  })  {
+  }) {
     return TrackingState(
       walkedSegmentIds: walkedSegmentIds ?? this.walkedSegmentIds,
       walkedSegments: walkedSegments ?? this.walkedSegments,
       isActive: isActive ?? this.isActive,
+      isGridReady: isGridReady ?? this.isGridReady,
       errorMessage: errorMessage ?? this.errorMessage,
     );
   }
@@ -70,16 +80,34 @@ class TrackingState {
 class TrackingNotifier extends StateNotifier<TrackingState> {
   final Ref _ref;
 
+  // The spatial grid service — lives here because tracking owns the
+  // matching logic. One instance, reused across all GPS updates.
+  final RoadMatchingService _matchingService = RoadMatchingService();
+
   TrackingNotifier(this._ref) : super(const TrackingState());
 
   // Distance threshold in meters.
   // If the user is within this distance of a road segment,
+  // that segment is marked as "walked".
   //
-  // 25 meters accounts for GPS inaccuracy ( which is typically
-  // 3 - 10 meters outside) plus the fact that the user might be
+  // 25 meters accounts for GPS inaccuracy (which is typically
+  // 3-10 meters outside) plus the fact that the user might be
   // walking on a sidewalk next to the road, not on the road itself.
   static const double _matchThresholdMeters = 25.0;
 
+  // --- Build the spatial grid index ---
+  // Call this once when road segments are loaded. It creates the
+  // grid that makes GPS-to-road matching fast.
+  //
+  // This is called from map_screen.dart after roads finish loading.
+  // It replaces the old approach of scanning all segments on every
+  // GPS update.
+  void buildGrid(List<RoadSegmentModel> segments) {
+    _matchingService.buildGrid(segments);
+    state = state.copyWith(isGridReady: true);
+  }
+
+  // --- Start GPS tracking ---
   Future<void> startTracking() async {
     await _ref.read(locationProvider.notifier).startTracking();
     state = state.copyWith(isActive: true);
@@ -92,56 +120,52 @@ class TrackingNotifier extends StateNotifier<TrackingState> {
   }
 
   // --- Process a GPS position ---
-  // This is the method that does the actual tracking work.
-  // Called each time a new GPS position arrives.
+  // This is the method called each time a new GPS position arrives.
+  // It uses the spatial grid to find the nearest road segment quickly,
+  // and marks it as walked if close enough.
   //
-  // It finds the nearest road segment and, if it's close enough,
-  // marks it as walked.
+  // IMPORTANT: This is called by map_screen.dart via ref.listen on
+  // locationProvider. The map screen acts as the "bridge" connecting
+  // GPS updates to the tracking logic.
   void processPosition(Position position) {
-    // Get the current road segments from roadProvider
-    final roadState = _ref.read(roadProvider);
+    // Can't match if the grid hasn't been built yet
+    if (!_matchingService.isBuilt) return;
 
-    if (roadState.segments.isEmpty) return;
-
-    // Find the nearest road segment to the user's position
-    final nearestResult = _findNearestSegment(
-      position,
-      roadState.segments,
+    // Use the spatial grid to find the nearest road segment.
+    // This checks only ~20 nearby segments instead of all ~10,000.
+    final result = _matchingService.findNearestSegment(
+      position.latitude,
+      position.longitude,
     );
 
-    // If no segment is near enough do nothing
-    if (nearestResult == null) return;
-
-    final nearestSegment = nearestResult.segment;
-    final distance = nearestResult.distance;
+    // If no segment is near enough, do nothing
+    if (result == null) return;
 
     // Only mark as walked if within threshold
-    if (distance <= _matchThresholdMeters) {
+    if (result.distance <= _matchThresholdMeters) {
       markSegmentWalked(
-        nearestSegment.segmentId,
-        nearestSegment.cityId,
+        result.segment.segmentId,
+        result.segment.cityId,
       );
     }
   }
 
   // --- Mark a segment as walked ---
-  // Records that the user has walked a specific road segment
+  // Records that the user has walked a specific road segment.
   // Checks for duplicates using the walkedSegmentIds Set.
   void markSegmentWalked(String segmentId, String cityId) {
-    // Skip if already walked - the Set makes this check fast
+    // Skip if already walked — the Set makes this check fast
     if (state.walkedSegmentIds.contains(segmentId)) return;
 
-    // Get the current user's ID from authProvider
-    // We import it here to avoid circular dependency at the top level
     // For now, hardcode 'local_user' to match auth_provider
     const userId = 'local_user';
 
     // Create the walk record
     final walkedSegment = WalkedSegmentModel(
-        userId: userId,
-        segmentId: segmentId,
-        cityId: cityId,
-        walkedAt: DateTime.now()
+      userId: userId,
+      segmentId: segmentId,
+      cityId: cityId,
+      walkedAt: DateTime.now(),
     );
 
     // Update state with the new walked segment.
@@ -156,108 +180,12 @@ class TrackingNotifier extends StateNotifier<TrackingState> {
     );
   }
 
-  // --- Find the nearest road segment to a GPS position ---
-  // Loops through all segments and finds the closest one.
-  //
-  // Return a _nearestSegmentResult with the segment and its distance,
-  // or null if there are no segments to check.
-  //
-  // TODO: Replace with road_matching_service.dart which will use
-  //  proper point-to-line distance (perpendicular distance from the
-  //  GPS point to each road's polyline). Current implementation uses
-  // point-to-point distance to the nearest vertex, which is simpler
-  // but less accurate.
-  _NearestSegmentResult? _findNearestSegment(
-      Position position,
-      List<RoadSegmentModel> segments,
-      ) {
-        if (segments.isEmpty) return null;
-
-        RoadSegmentModel? nearestSegment;
-        double nearestDistance = double.infinity;
-
-        // Loop through every road segment
-        for (final segment in segments) {
-          // Check distance to each point in the segment's polyline
-          for (final point in segment.polyline) {
-            final distance = _calculateDistance(
-              position.latitude,
-              position.longitude,
-              point.latitude,
-              point.longitude,
-            );
-
-            // If this point is closer than our current best, update
-            if (distance < nearestDistance) {
-              nearestDistance = distance;
-              nearestSegment = segment;
-            }
-          }
-        }
-
-        if (nearestSegment == null) return null;
-
-        return _NearestSegmentResult(
-          segment: nearestSegment,
-          distance: nearestDistance,
-        );
-      }
-
-  // --- Calculate distance between two GPS coordinates ---
-  // Uses the Haversine formula to calculate the distance in meters
-  // between two latitude/longitude points.
-  //
-  // Why Haversine? Because the Earth is a sphere (roughly) so you
-  // can't use Pythagoras. Haversine account for the curvature.
-  //
-  // This will be moved to geo_utils.dart later when we organise
-  // utility functions.
-  double _calculateDistance(
-      double lat1,
-      double lon1,
-      double lat2,
-      double lon2,
-  ) {
-    const double earthRadius = 6371000; // meters
-    final double dLat = _toRadians(lat2 - lat1);
-    final double dLon = _toRadians(lon2 - lon1);
-
-    final double a =
-        sin(dLat / 2) * sin(dLat /2) +
-        cos(_toRadians(lat1)) *
-          cos(_toRadians(lat2)) *
-          sin(dLon / 2) *
-          sin(dLon / 2);
-
-    final double c = 2 * atan2(sqrt(a), sqrt(1-a));
-    return earthRadius * c;
-  }
-
-  // Converts degrees to radians. GPS coordinates are in degrees
-  // but trigonometric functions (sin, cos) work with radians.
-  double _toRadians(double degrees){
-    return degrees * (pi/180);
-  }
-
   // --- Clear all walked data ---
   // Resets tracking state. Used when switching cities or for testing.
-  void clearWalkedSegments(){
+  void clearWalkedSegments() {
+    _matchingService.clear();
     state = const TrackingState();
   }
-}
-
-// --- Helper class ---
-// Bundles a segment with its distance so _findNearestSegment can
-// return both values. The underscore prefix makes it private to
-// this file - so other files can't use _NearestSegmentResult.
-class _NearestSegmentResult {
-  final RoadSegmentModel segment;
-  final double distance;
-
-  _NearestSegmentResult({
-    required this.segment,
-    required this.distance,
-  });
 }
 
 // --- Provider ---
@@ -267,35 +195,8 @@ class _NearestSegmentResult {
 //
 //    ref.read(trackingProvider.notifier).startTracking();
 //    ref.read(trackingProvider.notifier).stopTracking();
+//    ref.read(trackingProvider.notifier).buildGrid(segments);
 final trackingProvider =
-    StateNotifierProvider<TrackingNotifier, TrackingState>((ref) {
+StateNotifierProvider<TrackingNotifier, TrackingState>((ref) {
   return TrackingNotifier(ref);
 });
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

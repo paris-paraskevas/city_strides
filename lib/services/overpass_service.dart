@@ -7,10 +7,18 @@
 // - Parsing JSON responses into CityModel and RoadSegmentModel
 // - Calculating road segment lengths using the Haversine formula
 //
+// Two modes of operation:
+//   1. Relation-based: fetch boundary & roads for an OSM relation ID (e.g. Athens)
+//   2. Bounding-box-based: fetch roads within a custom area (e.g. Larissa Centre)
+//
 // Usage:
 //   final service = OverpassService();
-//   final city = await service.fetchCityBoundary(relationId: 187890); // Athens
-//   final roads = await service.fetchRoads(relationId: 187890);
+//   // Mode 1: OSM relation
+//   final city = await service.fetchCityBoundary(relationId: 1370736);
+//   final roads = await service.fetchRoads(relationId: 1370736, cityId: 'osm_1370736');
+//   // Mode 2: Custom boundary
+//   final boundary = await service.fetchBoundaryFromStreets(streetNames: [...], ...);
+//   final roads = await service.fetchRoadsInBbox(cityId: 'larissa_centre', ...);
 
 import 'dart:convert'; // For jsonDecode — turns JSON string into Dart objects
 import 'dart:math';    // For sin, cos, atan2, sqrt — used in Haversine formula
@@ -70,34 +78,25 @@ class OverpassService {
   ];
 
   // =========================================================================
-  // PUBLIC METHODS
+  // PUBLIC METHODS — RELATION-BASED (existing)
   // =========================================================================
 
   /// Fetches the boundary polygon for a city by its OSM relation ID.
   ///
   /// [relationId] — the OpenStreetMap relation ID for the city.
-  ///   Example: 187890 for Athens, Greece.
-  ///   You can find these at: https://www.openstreetmap.org/relation/187890
+  ///   Example: 1370736 for Athens, Greece.
   ///
   /// Returns a [CityModel] with the boundary polygon and metadata.
   /// Throws [OverpassException] if the request fails or returns no data.
   Future<CityModel> fetchCityBoundary({required int relationId}) async {
-    // Build the Overpass QL query.
-    // This asks for a specific relation (city boundary) with full geometry.
-    //
-    // "relation(id:...)" — fetch a specific OSM relation by ID
-    // "out geom;" — include the actual coordinates (not just metadata)
     final query = '''
 [out:json][timeout:$_boundaryTimeoutSeconds];
 relation(id:$relationId);
 out geom;
 ''';
 
-    // Send the query to Overpass API
     final jsonData = await _executeQuery(query);
 
-    // The response has an 'elements' array. For a city boundary,
-    // we expect exactly one element (the relation we asked for).
     final elements = jsonData['elements'] as List<dynamic>;
 
     if (elements.isEmpty) {
@@ -106,39 +105,21 @@ out geom;
       );
     }
 
-    // Parse the relation element into a CityModel
     return _parseBoundaryElement(elements.first, relationId);
   }
 
-  /// Fetches all walkable road segments within a city boundary.
+  /// Fetches all walkable road segments within a city boundary (by relation).
   ///
   /// [relationId] — the OpenStreetMap relation ID for the city.
-  /// [cityId] — the cityId string to assign to each road segment
-  ///   (should match the CityModel.cityId from fetchCityBoundary).
+  /// [cityId] — the cityId string to assign to each road segment.
   ///
   /// Returns a list of [RoadSegmentModel] for all walkable roads.
-  /// Throws [OverpassException] if the request fails.
   Future<List<RoadSegmentModel>> fetchRoads({
     required int relationId,
     required String cityId,
   }) async {
-    // Build the road types regex for the query.
-    // This creates: "residential|tertiary|secondary|..." which Overpass
-    // uses as a regex match against the highway tag.
     final highwayRegex = _walkableHighwayTypes.join('|');
 
-    // Build the Overpass QL query for roads.
-    //
-    // "area(id:3600000000 + relationId)" — converts the relation to a
-    //   searchable area. The 3600000000 offset is an Overpass convention
-    //   for converting relation IDs to area IDs.
-    //
-    // 'way["highway"~"..."]' — find all "ways" (roads/paths) where the
-    //   highway tag matches any of our walkable types.
-    //
-    // "(area.city)" — only roads inside the city area.
-    //
-    // "out geom;" — include full coordinate geometry.
     final areaId = 3600000000 + relationId;
     final query = '''
 [out:json][timeout:$_roadsTimeoutSeconds];
@@ -147,12 +128,153 @@ way["highway"~"^($highwayRegex)\$"](area.city);
 out geom;
 ''';
 
-    // Send the query to Overpass API
     final jsonData = await _executeQuery(query);
 
     final elements = jsonData['elements'] as List<dynamic>;
 
-    // Parse each road element into a RoadSegmentModel
+    final segments = <RoadSegmentModel>[];
+    for (final element in elements) {
+      final segment = _parseRoadElement(element, cityId);
+      if (segment != null) {
+        segments.add(segment);
+      }
+    }
+
+    return segments;
+  }
+
+  // =========================================================================
+  // PUBLIC METHODS — BOUNDING BOX-BASED (new for Chat 13)
+  // =========================================================================
+
+  /// Fetches the geometry of named streets and stitches them into a
+  /// continuous boundary polygon.
+  ///
+  /// This is used for custom city boundaries defined by ring roads
+  /// (like Larissa Centre, bounded by Κίμωνος Σανδράκη → Αθανασίου Λάγου
+  /// → Ηρώων Πολυτεχνείου).
+  ///
+  /// [streetNames] — list of street names that form the boundary ring.
+  /// [south], [west], [north], [east] — bounding box to search within.
+  ///   This prevents matching streets with the same name in other cities.
+  ///
+  /// Returns an ordered list of [LatLng] points forming a closed polygon.
+  /// Throws [OverpassException] if no streets are found.
+  ///
+  /// HOW IT WORKS:
+  /// 1. Queries Overpass for all OSM ways matching the street names
+  /// 2. Each street may consist of multiple way segments (OSM splits
+  ///    roads at intersections). We get back many small pieces.
+  /// 3. We "stitch" these pieces together by connecting endpoints
+  ///    that are close to each other, forming one continuous line.
+  /// 4. The result is an ordered polygon tracing the ring road.
+  Future<List<LatLng>> fetchBoundaryFromStreets({
+    required List<String> streetNames,
+    required double south,
+    required double west,
+    required double north,
+    required double east,
+  }) async {
+    // Build an Overpass union query for all street names.
+    //
+    // A "union" in Overpass is multiple queries inside parentheses,
+    // separated by semicolons. The results are combined.
+    //
+    // Example output:
+    //   (
+    //     way["name"="Κίμωνος Σανδράκη"](39.62,22.39,39.66,22.44);
+    //     way["name"="Αθανασίου Λάγου"](39.62,22.39,39.66,22.44);
+    //     way["name"="Ηρώων Πολυτεχνείου"](39.62,22.39,39.66,22.44);
+    //   );
+    final bbox = '$south,$west,$north,$east';
+    final wayQueries = streetNames
+        .map((name) => 'way["name"="$name"]($bbox);')
+        .join('\n  ');
+
+    final query = '''
+[out:json][timeout:$_boundaryTimeoutSeconds];
+(
+  $wayQueries
+);
+out geom;
+''';
+
+    final jsonData = await _executeQuery(query);
+
+    final elements = jsonData['elements'] as List<dynamic>;
+
+    if (elements.isEmpty) {
+      throw OverpassException(
+        'No streets found matching names: ${streetNames.join(", ")}. '
+            'Check spelling matches OpenStreetMap exactly.',
+      );
+    }
+
+    // Extract each way's coordinates as a separate list.
+    // Each OSM way becomes one List<LatLng>.
+    final ways = <List<LatLng>>[];
+
+    for (final element in elements) {
+      final geometry = element['geometry'] as List<dynamic>? ?? [];
+      if (geometry.length < 2) continue;
+
+      final wayPoints = <LatLng>[];
+      for (final point in geometry) {
+        final lat = (point['lat'] as num?)?.toDouble();
+        final lon = (point['lon'] as num?)?.toDouble();
+        if (lat != null && lon != null) {
+          wayPoints.add(LatLng(lat, lon));
+        }
+      }
+      if (wayPoints.length >= 2) {
+        ways.add(wayPoints);
+      }
+    }
+
+    if (ways.isEmpty) {
+      throw OverpassException(
+        'Streets found but contain no coordinates.',
+      );
+    }
+
+    // Stitch all way segments into one continuous polygon.
+    final stitchedPolygon = _stitchWays(ways);
+
+    return stitchedPolygon;
+  }
+
+  /// Fetches all walkable road segments within a bounding box.
+  ///
+  /// Unlike [fetchRoads] which uses an OSM relation/area, this method
+  /// uses raw latitude/longitude bounds. This is needed for custom
+  /// city boundaries that don't correspond to an OSM administrative area.
+  ///
+  /// [cityId] — the cityId to assign to each road segment.
+  /// [south], [west], [north], [east] — the bounding box.
+  ///
+  /// Returns a list of [RoadSegmentModel] for all walkable roads in the box.
+  Future<List<RoadSegmentModel>> fetchRoadsInBbox({
+    required String cityId,
+    required double south,
+    required double west,
+    required double north,
+    required double east,
+  }) async {
+    final highwayRegex = _walkableHighwayTypes.join('|');
+    final bbox = '$south,$west,$north,$east';
+
+    // Much simpler query than the relation-based one:
+    // just find all walkable ways inside the bounding box.
+    final query = '''
+[out:json][timeout:$_roadsTimeoutSeconds];
+way["highway"~"^($highwayRegex)\$"]($bbox);
+out geom;
+''';
+
+    final jsonData = await _executeQuery(query);
+
+    final elements = jsonData['elements'] as List<dynamic>;
+
     final segments = <RoadSegmentModel>[];
     for (final element in elements) {
       final segment = _parseRoadElement(element, cityId);
@@ -169,15 +291,11 @@ out geom;
   // =========================================================================
 
   /// Sends an Overpass QL query and returns the parsed JSON response.
-  ///
-  /// Uses HTTP POST (not GET) because queries can be long and complex.
-  /// GET has URL length limits; POST doesn't.
   Future<Map<String, dynamic>> _executeQuery(String query) async {
     try {
       final response = await http
           .post(
         Uri.parse(_baseUrl),
-        // Overpass API expects the query in a form field called 'data'
         body: {'data': query},
       )
           .timeout(
@@ -189,19 +307,15 @@ out geom;
         },
       );
 
-      // Check HTTP status code
       if (response.statusCode == 200) {
-        // Success — parse the JSON response body
         return jsonDecode(response.body) as Map<String, dynamic>;
       } else if (response.statusCode == 429) {
-        // 429 = Too Many Requests — Overpass has rate limits
         throw OverpassException(
           'Overpass API rate limit reached. Please wait a moment and try again.',
         );
       } else if (response.statusCode == 504) {
-        // 504 = Gateway Timeout — query took too long on their server
         throw OverpassException(
-          'Query timed out on the Overpass server. The city may have too many roads for a single query.',
+          'Query timed out on the Overpass server. The area may have too many roads for a single query.',
         );
       } else {
         throw OverpassException(
@@ -209,10 +323,8 @@ out geom;
         );
       }
     } on OverpassException {
-      // Re-throw our own exceptions as-is
       rethrow;
     } catch (e) {
-      // Catch network errors, JSON parse errors, etc.
       throw OverpassException('Failed to contact Overpass API: $e');
     }
   }
@@ -222,38 +334,22 @@ out geom;
   // =========================================================================
 
   /// Parses an OSM relation element into a CityModel.
-  ///
-  /// OSM relations have 'members' which are the individual line segments
-  /// that make up the boundary. We extract all coordinates from members
-  /// with role "outer" (the main boundary, not inner holes like lakes).
   CityModel _parseBoundaryElement(
       Map<String, dynamic> element,
       int relationId,
       ) {
-    // Extract city name and country from OSM tags
     final tags = element['tags'] as Map<String, dynamic>? ?? {};
-    // 'sorting_name' gives clean short names (e.g. "Athens" not "Municipality of Athens")
-    // Falls back through increasingly verbose name tags
     final cityName = (tags['sorting_name'] as String?) ??
         (tags['name:en'] as String?) ??
         (tags['name'] as String?) ??
         'Unknown City';
 
-    // Country is rarely tagged on city-level relations.
-    // We check several possible tags, but this will often be empty.
-    // TODO: Fetch country from parent relation or reverse geocoding later.
     final country = (tags['ISO3166-1:alpha2'] as String?) ??
         (tags['ISO3166-1'] as String?) ??
         (tags['is_in:country'] as String?) ??
         (tags['is_in:country_code'] as String?) ??
         '';
 
-    // Extract boundary coordinates from relation members.
-    //
-    // A city boundary relation has "members" — these are the individual
-    // line segments (ways) that when connected form the boundary polygon.
-    // We want members with role "outer" (the main boundary).
-    // Each member has a 'geometry' array of {lat, lon} points.
     final members = element['members'] as List<dynamic>? ?? [];
     final boundaryPoints = <LatLng>[];
 
@@ -262,7 +358,6 @@ out geom;
       final role = memberMap['role'] as String? ?? '';
       final type = memberMap['type'] as String? ?? '';
 
-      // Only process outer boundary ways (not inner holes, not nodes)
       if (role == 'outer' && type == 'way') {
         final geometry = memberMap['geometry'] as List<dynamic>? ?? [];
         for (final point in geometry) {
@@ -281,9 +376,6 @@ out geom;
       );
     }
 
-    // Build the CityModel.
-    // Note: totalRoadSegments and totalRoadLengthMeters are 0 for now —
-    // they get populated after we fetch roads separately.
     return CityModel(
       cityId: 'osm_$relationId',
       name: cityName,
@@ -295,24 +387,19 @@ out geom;
   }
 
   /// Parses an OSM way element into a RoadSegmentModel.
-  ///
-  /// Returns null if the way has no geometry (skip it).
+  /// Returns null if the way has no geometry.
   RoadSegmentModel? _parseRoadElement(
       Map<String, dynamic> element,
       String cityId,
       ) {
-    // Each road is an OSM "way" with an ID and geometry
     final wayId = element['id'];
     final geometry = element['geometry'] as List<dynamic>? ?? [];
 
-    // Skip ways with no coordinates (shouldn't happen, but be safe)
     if (geometry.length < 2) return null;
 
-    // Extract street name from tags (many roads are unnamed)
     final tags = element['tags'] as Map<String, dynamic>? ?? {};
     final name = (tags['name'] as String?) ?? '';
 
-    // Convert geometry points to LatLng list
     final polyline = <LatLng>[];
     for (final point in geometry) {
       final lat = (point['lat'] as num?)?.toDouble();
@@ -324,8 +411,6 @@ out geom;
 
     if (polyline.length < 2) return null;
 
-    // Calculate the total length of this road segment
-    // by summing the distance between each consecutive pair of points.
     final lengthMeters = _calculatePolylineLength(polyline);
 
     return RoadSegmentModel(
@@ -338,14 +423,96 @@ out geom;
   }
 
   // =========================================================================
+  // PRIVATE METHODS — WAY STITCHING (new for Chat 13)
+  // =========================================================================
+
+  /// Stitches multiple OSM way segments into a single continuous polygon.
+  ///
+  /// WHY THIS IS NEEDED:
+  /// OpenStreetMap splits roads at every intersection. So a ring road
+  /// that's one continuous street to a human is stored as 10-30 separate
+  /// "way" objects in OSM. To draw a boundary polygon, we need to
+  /// connect them end-to-end in the right order.
+  ///
+  /// HOW IT WORKS:
+  /// 1. Start with the first way segment
+  /// 2. Look at its last point (endpoint)
+  /// 3. Find another segment that starts or ends near that point
+  /// 4. If it starts there → append its points in order
+  ///    If it ends there → append its points in reverse
+  /// 5. Repeat until no more segments can be connected
+  ///
+  /// This is like connecting puzzle pieces by matching their edges.
+  ///
+  /// EXAMPLE:
+  ///   Way A: [p1, p2, p3]
+  ///   Way B: [p3, p4, p5]  ← starts where A ends
+  ///   Way C: [p7, p6, p5]  ← ends where B ends (needs reversing)
+  ///   Result: [p1, p2, p3, p4, p5, p6, p7]
+  List<LatLng> _stitchWays(List<List<LatLng>> ways) {
+    if (ways.isEmpty) return [];
+    if (ways.length == 1) return ways.first;
+
+    // Start with the first way's points
+    final result = List<LatLng>.from(ways.first);
+
+    // Track which ways we've already used
+    final remaining = List<List<LatLng>>.from(ways.sublist(1));
+
+    // Keep connecting ways until we can't find any more matches
+    int maxIterations = remaining.length + 1; // Safety limit
+    int iteration = 0;
+
+    while (remaining.isNotEmpty && iteration < maxIterations) {
+      iteration++;
+      final lastPoint = result.last;
+      bool foundMatch = false;
+
+      for (int i = 0; i < remaining.length; i++) {
+        final way = remaining[i];
+
+        // Case 1: This way STARTS where our chain ends
+        // → append its points in order (skip first to avoid duplicate)
+        if (_pointsClose(lastPoint, way.first)) {
+          result.addAll(way.skip(1));
+          remaining.removeAt(i);
+          foundMatch = true;
+          break;
+        }
+
+        // Case 2: This way ENDS where our chain ends
+        // → append its points in REVERSE (skip first of reversed = last of original)
+        if (_pointsClose(lastPoint, way.last)) {
+          result.addAll(way.reversed.skip(1));
+          remaining.removeAt(i);
+          foundMatch = true;
+          break;
+        }
+      }
+
+      // If no segment connects to our chain, stop.
+      // (Some segments might be disconnected — that's OK, we have enough)
+      if (!foundMatch) break;
+    }
+
+    return result;
+  }
+
+  /// Checks if two LatLng points are close enough to be considered
+  /// the same intersection point.
+  ///
+  /// 0.00005 degrees ≈ 5.5 meters — accounts for slight coordinate
+  /// differences between connected OSM ways at the same intersection.
+  bool _pointsClose(LatLng a, LatLng b) {
+    return (a.latitude - b.latitude).abs() < 0.00005 &&
+        (a.longitude - b.longitude).abs() < 0.00005;
+  }
+
+  // =========================================================================
   // PRIVATE METHODS — GEOMETRY
   // =========================================================================
 
   /// Calculates the total length of a polyline in meters.
-  ///
-  /// Sums the Haversine distance between each consecutive pair of points.
-  /// You already have Haversine in tracking_provider.dart — this is the
-  /// same formula, used here for measuring road lengths.
   double _calculatePolylineLength(List<LatLng> points) {
     double totalLength = 0.0;
     for (int i = 0; i < points.length - 1; i++) {
@@ -354,20 +521,15 @@ out geom;
     return totalLength;
   }
 
-  /// Haversine formula — calculates distance between two GPS coordinates
-  /// on a sphere (the Earth).
-  ///
-  /// Returns distance in meters.
+  /// Haversine formula — distance between two GPS coordinates in meters.
   double _haversineDistance(LatLng point1, LatLng point2) {
     const double earthRadiusMeters = 6371000.0;
 
-    // Convert degrees to radians
     final lat1 = point1.latitude * pi / 180.0;
     final lat2 = point2.latitude * pi / 180.0;
     final dLat = (point2.latitude - point1.latitude) * pi / 180.0;
     final dLon = (point2.longitude - point1.longitude) * pi / 180.0;
 
-    // Haversine formula
     final a = sin(dLat / 2) * sin(dLat / 2) +
         cos(lat1) * cos(lat2) * sin(dLon / 2) * sin(dLon / 2);
     final c = 2 * atan2(sqrt(a), sqrt(1 - a));
@@ -380,16 +542,6 @@ out geom;
 // CUSTOM EXCEPTION
 // ===========================================================================
 
-/// Custom exception for Overpass API errors.
-///
-/// This gives us specific error messages we can display to the user,
-/// rather than generic "something went wrong" messages.
-///
-/// New concept — Custom exceptions:
-/// Dart lets you create your own exception types by implementing Exception.
-/// This helps distinguish "Overpass API failed" from other errors like
-/// "no internet" or "JSON parse error". The provider can catch
-/// OverpassException specifically and show a meaningful error message.
 class OverpassException implements Exception {
   final String message;
 

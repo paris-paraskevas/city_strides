@@ -4,19 +4,23 @@
 // Uses OverpassService to fetch real city boundary data from OpenStreetMap.
 // Uses CacheService to store/retrieve city data locally.
 //
-// Data flow:
-//   1. Check cache for city data
-//   2. If cached → load from disk (instant)
-//   3. If not cached → fetch from Overpass API → save to cache → display
+// Two modes of loading (added in Chat 13):
+//   1. By OSM relation ID — for cities with admin boundaries (e.g. Athens)
+//   2. By custom street names — for cities where we define the boundary
+//      using a ring road perimeter (e.g. Larissa Centre)
+//
+// Both modes use the same cache-first strategy:
+//   Check cache → load from disk (instant) or fetch from API → save to cache
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:latlong2/latlong.dart';
 import '../models/city_model.dart';
 import '../services/overpass_service.dart';
 import '../services/cache_service.dart';
 import 'location_provider.dart';
 
 // --- State class ---
-// UNCHANGED — no UI changes needed.
+// UNCHANGED from previous version.
 class CityState {
   final CityModel? currentCity;
   final bool isLoading;
@@ -49,33 +53,28 @@ class CityNotifier extends StateNotifier<CityState> {
 
   CityNotifier(this._ref) : super(const CityState());
 
-  // --- Load city by OSM relation ID ---
-  // Now with caching:
-  //   1. Build the cityId from the relation ID
-  //   2. Check if city.json exists in cache
-  //   3. If yes → load from cache (fast, no internet needed)
-  //   4. If no → fetch from Overpass API → save to cache
+  // =========================================================================
+  // MODE 1: Load by OSM relation ID (existing — for cities like Athens)
+  // =========================================================================
+
+  /// Loads a city boundary from an OSM relation.
+  /// Cache-first: checks disk before calling API.
   Future<void> loadCityByRelationId(int relationId) async {
     state = state.copyWith(isLoading: true, errorMessage: null);
 
-    // The cityId format matches what OverpassService produces
     final cityId = 'osm_$relationId';
 
     try {
       // Step 1: Check cache
       if (await _cacheService.isCityCached(cityId)) {
-        // Cache hit — load from disk
         final cachedCity = await _cacheService.loadCachedCity(cityId);
-
         if (cachedCity != null) {
           state = state.copyWith(
             currentCity: cachedCity,
             isLoading: false,
           );
-          return; // Done — no need to call the API
+          return;
         }
-        // If loadCachedCity returned null (corrupt file), fall through
-        // to fetch from API below.
       }
 
       // Step 2: Cache miss — fetch from Overpass API
@@ -83,7 +82,7 @@ class CityNotifier extends StateNotifier<CityState> {
         relationId: relationId,
       );
 
-      // Step 3: Save to cache for next time
+      // Step 3: Save to cache
       await _cacheService.saveCity(city);
 
       // Step 4: Update state
@@ -104,8 +103,100 @@ class CityNotifier extends StateNotifier<CityState> {
     }
   }
 
-  // --- Detect city from GPS position ---
-  // Future implementation — currently falls back to Athens.
+  // =========================================================================
+  // MODE 2: Load custom city boundary from street names (new — Chat 13)
+  // =========================================================================
+
+  /// Loads a city boundary defined by a ring of named streets.
+  ///
+  /// This is used when an OSM administrative boundary doesn't exist at
+  /// the right scale (e.g. Larissa has a municipality boundary that's
+  /// 335 km², but we only want the ~4 km² urban centre).
+  ///
+  /// [cityId] — unique ID for this custom city (e.g. 'larissa_centre')
+  /// [name] — display name (e.g. 'Larissa Centre')
+  /// [country] — country name (e.g. 'Greece')
+  /// [streetNames] — names of streets forming the boundary ring
+  /// [searchBbox] — bounding box to search for those streets within
+  ///   (prevents matching streets with the same name in other cities)
+  ///
+  /// HOW IT WORKS:
+  /// 1. Check cache — if we've fetched this boundary before, load it
+  /// 2. If not cached — fetch the street geometries from Overpass
+  /// 3. OverpassService stitches the OSM way segments into one polygon
+  /// 4. Build a CityModel with that polygon
+  /// 5. Save to cache for next time
+  Future<void> loadCustomCity({
+    required String cityId,
+    required String name,
+    required String country,
+    required List<String> streetNames,
+    required double south,
+    required double west,
+    required double north,
+    required double east,
+  }) async {
+    state = state.copyWith(isLoading: true, errorMessage: null);
+
+    try {
+      // Step 1: Check cache
+      if (await _cacheService.isCityCached(cityId)) {
+        final cachedCity = await _cacheService.loadCachedCity(cityId);
+        if (cachedCity != null) {
+          state = state.copyWith(
+            currentCity: cachedCity,
+            isLoading: false,
+          );
+          return;
+        }
+      }
+
+      // Step 2: Cache miss — fetch street geometries from Overpass
+      final boundaryPolygon = await _overpassService.fetchBoundaryFromStreets(
+        streetNames: streetNames,
+        south: south,
+        west: west,
+        north: north,
+        east: east,
+      );
+
+      // Step 3: Build CityModel with the stitched polygon
+      final city = CityModel(
+        cityId: cityId,
+        name: name,
+        country: country,
+        boundaryPolygon: boundaryPolygon,
+        totalRoadSegments: 0,       // Updated after roads load
+        totalRoadLengthMeters: 0.0, // Updated after roads load
+      );
+
+      // Step 4: Save to cache
+      await _cacheService.saveCity(city);
+
+      // Step 5: Update state
+      state = state.copyWith(
+        currentCity: city,
+        isLoading: false,
+      );
+    } on OverpassException catch (e) {
+      state = state.copyWith(
+        isLoading: false,
+        errorMessage: e.message,
+      );
+    } catch (e) {
+      state = state.copyWith(
+        isLoading: false,
+        errorMessage: 'Failed to load city: $e',
+      );
+    }
+  }
+
+  // =========================================================================
+  // SHARED METHODS (unchanged)
+  // =========================================================================
+
+  /// Detect city from GPS position.
+  /// Future implementation — currently falls back to Athens.
   Future<void> detectCity() async {
     final locationState = _ref.read(locationProvider);
 
@@ -121,7 +212,7 @@ class CityNotifier extends StateNotifier<CityState> {
     await loadCityByRelationId(1370736);
   }
 
-  // --- Manually set city ---
+  /// Manually set city (e.g. from a search result).
   void setCity(CityModel city) {
     state = state.copyWith(
       currentCity: city,
@@ -130,16 +221,13 @@ class CityNotifier extends StateNotifier<CityState> {
     );
   }
 
-  // --- Clear city ---
+  /// Clear city state.
   void clearCity() {
     state = const CityState();
   }
 }
 
 // --- Provider ---
-// Usage:
-//    final cityState = ref.watch(cityProvider);
-//    ref.read(cityProvider.notifier).loadCityByRelationId(1370736);
 final cityProvider =
 StateNotifierProvider<CityNotifier, CityState>((ref) {
   return CityNotifier(ref);
