@@ -29,9 +29,8 @@
 //   - Too large (1km): too many segments per cell, not much faster than brute force
 //   - 100m: typically 5-30 segments per cell — fast to check
 
-import 'dart:math';
-import 'package:latlong2/latlong.dart';
 import '../models/road_segment_model.dart';
+import '../utils/geo_utils.dart' as geo;
 
 class RoadMatchingService {
   // --- Grid Configuration ---
@@ -186,7 +185,7 @@ class RoadMatchingService {
     double minDistance = double.infinity;
 
     for (final point in segment.polyline) {
-      final distance = _haversineDistance(
+      final distance = geo.haversineDistance(
         lat, lng,
         point.latitude, point.longitude,
       );
@@ -228,36 +227,6 @@ class RoadMatchingService {
   // Example: longitude 22.4161 / 0.001 = 22416.1 → col 22416
   int _lngToCol(double longitude) {
     return (longitude / _cellSize).floor();
-  }
-
-  // --- Haversine distance formula ---
-  // Calculates the distance in meters between two GPS coordinates
-  // on the surface of the Earth.
-  //
-  // Same formula as in tracking_provider.dart, copied here so this
-  // service is self-contained with no provider dependencies.
-  // Later we can extract this to a shared geo_utils.dart file.
-  double _haversineDistance(
-      double lat1, double lng1,
-      double lat2, double lng2,
-      ) {
-    const double earthRadius = 6371000; // meters
-    final double dLat = _toRadians(lat2 - lat1);
-    final double dLng = _toRadians(lng2 - lng1);
-
-    final double a =
-        sin(dLat / 2) * sin(dLat / 2) +
-            cos(_toRadians(lat1)) *
-                cos(_toRadians(lat2)) *
-                sin(dLng / 2) *
-                sin(dLng / 2);
-
-    final double c = 2 * atan2(sqrt(a), sqrt(1 - a));
-    return earthRadius * c;
-  }
-
-  double _toRadians(double degrees) {
-    return degrees * (pi / 180);
   }
 
   // --- Clear the grid ---

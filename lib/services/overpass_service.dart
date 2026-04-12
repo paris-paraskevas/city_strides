@@ -21,10 +21,10 @@
 //   final roads = await service.fetchRoadsInBbox(cityId: 'larissa_centre', ...);
 
 import 'dart:convert'; // For jsonDecode — turns JSON string into Dart objects
-import 'dart:math';    // For sin, cos, atan2, sqrt — used in Haversine formula
 
 import 'package:http/http.dart' as http; // HTTP client for API calls
 import 'package:latlong2/latlong.dart';  // LatLng coordinate class
+import '../utils/geo_utils.dart' as geo;
 
 import '../models/city_model.dart';
 import '../models/road_segment_model.dart';
@@ -411,7 +411,7 @@ out geom;
 
     if (polyline.length < 2) return null;
 
-    final lengthMeters = _calculatePolylineLength(polyline);
+    final lengthMeters = geo.polylineLength(polyline);
 
     return RoadSegmentModel(
       segmentId: 'way_$wayId',
@@ -508,34 +508,7 @@ out geom;
         (a.longitude - b.longitude).abs() < 0.00005;
   }
 
-  // =========================================================================
-  // PRIVATE METHODS — GEOMETRY
-  // =========================================================================
 
-  /// Calculates the total length of a polyline in meters.
-  double _calculatePolylineLength(List<LatLng> points) {
-    double totalLength = 0.0;
-    for (int i = 0; i < points.length - 1; i++) {
-      totalLength += _haversineDistance(points[i], points[i + 1]);
-    }
-    return totalLength;
-  }
-
-  /// Haversine formula — distance between two GPS coordinates in meters.
-  double _haversineDistance(LatLng point1, LatLng point2) {
-    const double earthRadiusMeters = 6371000.0;
-
-    final lat1 = point1.latitude * pi / 180.0;
-    final lat2 = point2.latitude * pi / 180.0;
-    final dLat = (point2.latitude - point1.latitude) * pi / 180.0;
-    final dLon = (point2.longitude - point1.longitude) * pi / 180.0;
-
-    final a = sin(dLat / 2) * sin(dLat / 2) +
-        cos(lat1) * cos(lat2) * sin(dLon / 2) * sin(dLon / 2);
-    final c = 2 * atan2(sqrt(a), sqrt(1 - a));
-
-    return earthRadiusMeters * c;
-  }
 }
 
 // ===========================================================================

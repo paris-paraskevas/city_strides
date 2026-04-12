@@ -27,6 +27,8 @@ import '../../providers/location_provider.dart';
 import '../../providers/tracking_provider.dart';
 import '../../providers/progress_provider.dart';
 import '../debug/debug_screen.dart';
+import '../../widgets/common/error_display.dart';
+import '../../widgets/common/loading_indicator.dart';
 
 class MapScreen extends ConsumerStatefulWidget {
   const MapScreen({super.key});
@@ -245,7 +247,31 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           ),
         ],
       ),
-      body: FlutterMap(
+      body: _buildBody(cityState, roadState, locationState, trackingState),
+    );
+  }
+
+  Widget _buildBody(
+    CityState cityState,
+    RoadState roadState,
+    LocationState locationState,
+    TrackingState trackingState,
+  ) {
+    // Show error if city or road loading failed
+    final error = cityState.errorMessage ?? roadState.errorMessage;
+    if (error != null) {
+      return ErrorDisplay(
+        message: error,
+        onRetry: () => _loadInitialData(),
+      );
+    }
+
+    // Show loading indicator while data loads
+    if (cityState.isLoading || roadState.isLoading) {
+      return const LoadingIndicator(label: 'Loading city data...');
+    }
+
+    return FlutterMap(
         mapController: _mapController,
         options: MapOptions(
           initialCenter: _defaultCentre,
@@ -315,7 +341,6 @@ class _MapScreenState extends ConsumerState<MapScreen> {
               ],
             ),
         ],
-      ),
     );
   }
 }

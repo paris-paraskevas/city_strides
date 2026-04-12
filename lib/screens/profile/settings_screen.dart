@@ -15,6 +15,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../providers/auth_provider.dart';
+import '../../config/theme.dart';
 import '../../providers/settings_provider.dart';
 import '../../providers/tracking_provider.dart';
 
@@ -65,7 +66,7 @@ class SettingsScreen extends ConsumerWidget {
                   : 'Manual — start/stop tracking yourself',
             ),
             value: user?.trackingMode == 'passive',
-            activeThumbColor: Colors.teal,
+            activeThumbColor: AppTheme.primary,
             // onChanged receives true (switched ON) or false (switched OFF).
             // We convert that boolean back to our string format.
             //
@@ -119,7 +120,7 @@ class SettingsScreen extends ConsumerWidget {
               max: 15.0,
               divisions: 12,
               label: '${settings.distanceFilterMeters.round()}m',
-              activeColor: Colors.teal,
+              activeColor: AppTheme.primary,
               onChanged: (double value) {
                 ref.read(settingsProvider.notifier).setDistanceFilter(value);
               },
@@ -131,7 +132,7 @@ class SettingsScreen extends ConsumerWidget {
             child: Text(
               'Lower = more accurate tracking, higher battery use\n'
                   'Higher = less accurate, better battery life',
-              style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+              style: TextStyle(fontSize: 12, color: AppTheme.textHint),
             ),
           ),
           const SizedBox(height: 8),
@@ -154,7 +155,7 @@ class SettingsScreen extends ConsumerWidget {
                   : 'Distances shown in miles',
             ),
             value: settings.units == 'km',
-            activeThumbColor: Colors.teal,
+            activeThumbColor: AppTheme.primary,
             onChanged: (bool isKm) {
               ref.read(settingsProvider.notifier).setUnits(
                 isKm ? 'km' : 'miles',
@@ -180,7 +181,7 @@ class SettingsScreen extends ConsumerWidget {
           // We show a confirmation dialog before actually clearing,
           // because this is a destructive action the user can't undo.
           ListTile(
-            leading: const Icon(Icons.delete_outline, color: Colors.orange),
+            leading: const Icon(Icons.delete_outline, color: AppTheme.warning),
             title: const Text('Clear Walking Data'),
             subtitle: const Text('Reset all walked segments'),
             onTap: () => _showClearDataDialog(context, ref),
@@ -198,10 +199,10 @@ class SettingsScreen extends ConsumerWidget {
           // The red colour signals "danger" — this is a convention in
           // UI design for irreversible or significant actions.
           ListTile(
-            leading: const Icon(Icons.logout, color: Colors.red),
+            leading: const Icon(Icons.logout, color: AppTheme.danger),
             title: const Text(
               'Log Out',
-              style: TextStyle(color: Colors.red),
+              style: TextStyle(color: AppTheme.danger),
             ),
             subtitle: const Text('Sign out of your account'),
             onTap: () => _showLogoutDialog(context, ref),
@@ -218,7 +219,7 @@ class SettingsScreen extends ConsumerWidget {
               'City Strides v0.14.0',
               style: TextStyle(
                 fontSize: 13,
-                color: Colors.grey.shade500,
+                color: AppTheme.textMuted,
               ),
             ),
           ),
@@ -243,7 +244,7 @@ class SettingsScreen extends ConsumerWidget {
         style: TextStyle(
           fontSize: 13,
           fontWeight: FontWeight.bold,
-          color: Colors.grey.shade600,
+          color: AppTheme.textHint,
           // letterSpacing: adds extra space between each character.
           // Common in section headers and labels for a clean look.
           letterSpacing: 1.0,
@@ -298,7 +299,7 @@ class SettingsScreen extends ConsumerWidget {
               },
               child: const Text(
                 'Clear Data',
-                style: TextStyle(color: Colors.red),
+                style: TextStyle(color: AppTheme.danger),
               ),
             ),
           ],
@@ -339,7 +340,7 @@ class SettingsScreen extends ConsumerWidget {
               },
               child: const Text(
                 'Log Out',
-                style: TextStyle(color: Colors.red),
+                style: TextStyle(color: AppTheme.danger),
               ),
             ),
           ],

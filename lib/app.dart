@@ -1,8 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'providers/auth_provider.dart';
-import 'screens/debug/debug_screen.dart';
-import 'screens/map/map_screen.dart';
+import 'config/theme.dart';
 import 'screens/home/home_screen.dart';
 
 class CityStridesApp extends ConsumerWidget {
@@ -26,10 +25,7 @@ class CityStridesApp extends ConsumerWidget {
     return MaterialApp(
       title: 'City Strides',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
-        useMaterial3: true,
-      ),
+      theme: AppTheme.lightTheme,
       home: const HomeScreen(),
     );
   }
