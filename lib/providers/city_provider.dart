@@ -13,36 +13,42 @@
 //   Check cache → load from disk (instant) or fetch from API → save to cache
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:latlong2/latlong.dart';
 import '../models/city_model.dart';
 import '../services/overpass_service.dart';
 import '../services/cache_service.dart';
 import 'location_provider.dart';
+import '../config/constants.dart';
 
 // --- State class ---
 // UNCHANGED from previous version.
 class CityState {
   final CityModel? currentCity;
+  final CityDefinition? selectedDefinition;
   final bool isLoading;
   final String? errorMessage;
 
   const CityState({
     this.currentCity,
+    this.selectedDefinition,
     this.isLoading = false,
     this.errorMessage,
   });
 
   CityState copyWith({
     CityModel? currentCity,
+    CityDefinition? selectedDefinition,
     bool? isLoading,
     String? errorMessage,
   }) {
     return CityState(
       currentCity: currentCity ?? this.currentCity,
+      selectedDefinition: selectedDefinition ?? this.selectedDefinition,
       isLoading: isLoading ?? this.isLoading,
       errorMessage: errorMessage ?? this.errorMessage,
     );
   }
+
+  String? get cityId => selectedDefinition?.cityId ?? currentCity?.cityId;
 }
 
 // --- State Notifier ---
@@ -195,7 +201,31 @@ class CityNotifier extends StateNotifier<CityState> {
   // SHARED METHODS (unchanged)
   // =========================================================================
 
-  /// Detect city from GPS position.
+  // =========================================================================
+  // LOAD FROM DEFINITION
+  // =========================================================================
+
+  /// Loads a city from a CityDefinition.
+  /// Delegates to the appropriate loading method based on the definition type.
+  Future<void> loadFromDefinition(CityDefinition def) async {
+    state = state.copyWith(selectedDefinition: def);
+    if (def.type == CityType.relation && def.relationId != null) {
+      await loadCityByRelationId(def.relationId!);
+    } else if (def.type == CityType.custom && def.streetNames != null) {
+      await loadCustomCity(
+        cityId: def.cityId,
+        name: def.name,
+        country: def.country,
+        streetNames: def.streetNames!,
+        south: def.bboxSouth!,
+        west: def.bboxWest!,
+        north: def.bboxNorth!,
+        east: def.bboxEast!,
+      );
+    }
+  }
+
+    /// Detect city from GPS position.
   /// Future implementation — currently falls back to Athens.
   Future<void> detectCity() async {
     final locationState = _ref.read(locationProvider);
@@ -208,8 +238,23 @@ class CityNotifier extends StateNotifier<CityState> {
       return;
     }
 
-    // TODO: Replace with real reverse-geocoding city detection.
-    await loadCityByRelationId(1370736);
+    // Check if user is within any known city bbox
+    final lat = locationState.currentPosition!.latitude;
+    final lng = locationState.currentPosition!.longitude;
+
+    for (final def in AppConstants.knownCities) {
+      if (def.bboxSouth != null &&
+          lat >= def.bboxSouth! && lat <= def.bboxNorth! &&
+          lng >= def.bboxWest! && lng <= def.bboxEast!) {
+        await loadFromDefinition(def);
+        return;
+      }
+    }
+
+    // Fallback: load first known city
+    if (AppConstants.knownCities.isNotEmpty) {
+      await loadFromDefinition(AppConstants.knownCities.first);
+    }
   }
 
   /// Manually set city (e.g. from a search result).

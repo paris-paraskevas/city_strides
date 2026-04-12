@@ -2,20 +2,12 @@
 //
 // Displays:
 //   - OpenStreetMap base tiles
-//   - City boundary polygon (Larissa Centre ring road)
+//   - City boundary polygon
 //   - Road segments as coloured polylines (grey=unwalked, green=walked)
 //   - User GPS position as a dot
 //
-// LARISSA CENTRE BOUNDARY (Chat 13):
-//   Instead of using an OSM administrative boundary (which is too large),
-//   Larissa Centre is defined by its inner ring road:
-//     Κίμωνος Σανδράκη → Αθανασίου Λάγου → Ηρώων Πολυτεχνείου
-//   The ring road coordinates are fetched from Overpass, stitched into a
-//   polygon, and used as both the visual boundary and the area to track.
-//
-// GPS-TO-TRACKING WIRING:
-//   ref.listen connects GPS updates to road matching via the spatial grid.
-//   Without this, road segments would never turn green.
+// City data is loaded from CityDefinition (see config/constants.dart).
+// Camera centres on user GPS position if available, otherwise city default.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -26,7 +18,7 @@ import '../../providers/road_provider.dart';
 import '../../providers/location_provider.dart';
 import '../../providers/tracking_provider.dart';
 import '../../providers/progress_provider.dart';
-import '../debug/debug_screen.dart';
+import '../../config/constants.dart';
 import '../../widgets/common/error_display.dart';
 import '../../widgets/common/loading_indicator.dart';
 
@@ -39,57 +31,7 @@ class MapScreen extends ConsumerStatefulWidget {
 
 class _MapScreenState extends ConsumerState<MapScreen> {
   late final MapController _mapController;
-
-  // =========================================================================
-  // LARISSA CENTRE CONFIGURATION
-  // =========================================================================
-
-  // Default map centre — central Larissa.
-  // From OSM node 57549546 (the city's main node).
-  static const LatLng _defaultCentre = LatLng(39.6383, 22.4161);
-  static const double _defaultZoom = 15.0;
-
-  // Unique ID for this custom city definition.
-  // Not 'osm_' prefix because this isn't an OSM relation — it's our own
-  // custom boundary. This ID is used in the cache directory structure:
-  //   cache/cities/larissa_centre/city.json
-  //   cache/cities/larissa_centre/roads.json
-  static const String _cityId = 'larissa_centre';
-
-  // The three streets that form Larissa's inner ring road.
-  // These change name as the road goes around the centre:
-  //   Κίμωνος Σανδράκη (west/south side)
-  //   → Αθανασίου Λάγου (east side)
-  //   → Ηρώων Πολυτεχνείου (north side, along the Pineios river)
-  //
-  // IMPORTANT: Spelling must match OpenStreetMap EXACTLY.
-  // If Overpass returns no results, check the spelling on
-  // https://www.openstreetmap.org by searching for these streets.
-  static const List<String> _boundaryStreetNames = [
-    'Κίμωνος Σανδράκη',
-    'Αθανασίου Λάγου',
-    'Ηρώων Πολυτεχνείου',
-  ];
-
-  // Bounding box for searching — a generous rectangle around Larissa centre.
-  // Used for two purposes:
-  //   1. Finding the ring road street segments (search area)
-  //   2. Fetching all walkable roads within the area
-  //
-  // This is slightly larger than the ring road itself to ensure:
-  //   - All segments of the ring road are found (they might extend slightly
-  //     beyond the visual boundary)
-  //   - Roads just outside the ring are included (Option A from our discussion)
-  //
-  // Landmarks for reference:
-  //   South (~39.625): below the southern ring road curve
-  //   North (~39.650): above Αλκαζάρ park / Πηνειός river
-  //   West  (~22.400): west of Νεάπολη
-  //   East  (~22.435): east of Ηρώων Πολυτεχνείου
-  static const double _bboxSouth = 39.625;
-  static const double _bboxWest = 22.400;
-  static const double _bboxNorth = 39.650;
-  static const double _bboxEast = 22.435;
+  ProviderSubscription<RoadState>? _roadSubscription;
 
   // =========================================================================
   // LIFECYCLE
@@ -103,49 +45,17 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadInitialData();
       _wireGpsToTracking();
+      _wireCitySwitching();
     });
   }
 
-  /// Loads city boundary and road segments for Larissa Centre.
-  ///
-  /// Both loads run concurrently — the boundary and roads don't depend
-  /// on each other because we use the same predefined bounding box for
-  /// both the street search and the road fetch.
-  ///
-  /// Loading flow:
-  ///   cityProvider.loadCustomCity() → fetches ring road geometry → CityModel
-  ///   roadProvider.loadRoadsInBbox() → fetches all walkable roads in bbox
-  ///   Both check cache first → only hit the API on first run.
-  void _loadInitialData() {
-    // Load the custom boundary from ring road street names.
-    // This calls OverpassService.fetchBoundaryFromStreets() which:
-    //   1. Queries Overpass for the 3 street names within our bbox
-    //   2. Gets back many small OSM way segments
-    //   3. Stitches them into one continuous polygon
-    //   4. Returns the polygon as List<LatLng>
-    //   5. CityProvider wraps it in a CityModel and caches it
-    ref.read(cityProvider.notifier).loadCustomCity(
-      cityId: _cityId,
-      name: 'Larissa Centre',
-      country: 'Greece',
-      streetNames: _boundaryStreetNames,
-      south: _bboxSouth,
-      west: _bboxWest,
-      north: _bboxNorth,
-      east: _bboxEast,
-    );
+  /// Loads city data for the given definition, or the default city.
+  void _loadInitialData([CityDefinition? def]) {
+    final city = def ?? AppConstants.knownCities.first;
 
-    // Load all walkable road segments within the bounding box.
-    // This uses the new fetchRoadsInBbox() method on OverpassService,
-    // which is simpler than the relation-based fetchRoads() — it just
-    // asks for all walkable highways inside a rectangle.
-    ref.read(roadProvider.notifier).loadRoadsInBbox(
-      cityId: _cityId,
-      south: _bboxSouth,
-      west: _bboxWest,
-      north: _bboxNorth,
-      east: _bboxEast,
-    );
+    // Load city boundary + road segments via CityDefinition
+    ref.read(cityProvider.notifier).loadFromDefinition(city);
+    _loadRoadsForDefinition(city);
 
     // Start GPS tracking
     ref.read(locationProvider.notifier).checkPermissions().then((granted) {
@@ -155,13 +65,33 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     });
 
     // Restore walked segments from disk once roads are available.
-    // We listen for roadProvider to finish loading, then load persisted
-    // data and recalculate progress.
     _restoreWalkedData();
+  }
+
+  /// Loads road segments based on the CityDefinition type.
+  void _loadRoadsForDefinition(CityDefinition def) {
+    if (def.type == CityType.relation && def.relationId != null) {
+      ref.read(roadProvider.notifier).loadRoadsForCity(
+        relationId: def.relationId!,
+        cityId: def.cityId,
+      );
+    } else if (def.bboxSouth != null) {
+      ref.read(roadProvider.notifier).loadRoadsInBbox(
+        cityId: def.cityId,
+        south: def.bboxSouth!,
+        west: def.bboxWest!,
+        north: def.bboxNorth!,
+        east: def.bboxEast!,
+      );
+    }
   }
 
   /// Loads previously walked segments from disk after roads are available.
   void _restoreWalkedData() {
+    // Cancel any previous listener (e.g. from a city switch)
+    _roadSubscription?.close();
+    _roadSubscription = null;
+
     // If roads are already loaded, restore immediately
     final roadState = ref.read(roadProvider);
     if (roadState.segments.isNotEmpty && !roadState.isLoading) {
@@ -170,16 +100,31 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     }
 
     // Otherwise wait for roads to finish loading
-    ref.listenManual<RoadState>(roadProvider, (previous, next) {
+    _roadSubscription = ref.listenManual<RoadState>(roadProvider, (previous, next) {
       if (next.segments.isNotEmpty && !next.isLoading) {
+        _roadSubscription?.close();
+        _roadSubscription = null;
         _loadAndRecalculate();
       }
     });
   }
 
   Future<void> _loadAndRecalculate() async {
-    await ref.read(trackingProvider.notifier).loadPersistedSegments(_cityId);
+    final cityId = ref.read(cityProvider).cityId;
+    if (cityId == null) return;
+    await ref.read(trackingProvider.notifier).loadPersistedSegments(cityId);
     ref.read(progressProvider.notifier).recalculate();
+  }
+
+  /// Re-runs walked data restoration when the selected city changes.
+  void _wireCitySwitching() {
+    ref.listenManual<CityState>(cityProvider, (previous, next) {
+      final prevId = previous?.selectedDefinition?.cityId;
+      final nextId = next.selectedDefinition?.cityId;
+      if (prevId != null && nextId != null && prevId != nextId) {
+        _restoreWalkedData();
+      }
+    });
   }
 
   /// Wires GPS updates to the tracking provider for road matching.
@@ -216,6 +161,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
 
   @override
   void dispose() {
+    _roadSubscription?.close();
     _mapController.dispose();
     super.dispose();
   }
@@ -231,24 +177,26 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     final locationState = ref.watch(locationProvider);
     final trackingState = ref.watch(trackingProvider);
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('City Strides'),
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.bug_report),
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const DebugScreen()),
-              );
-            },
-          ),
-        ],
-      ),
-      body: _buildBody(cityState, roadState, locationState, trackingState),
-    );
+    return _buildBody(cityState, roadState, locationState, trackingState);
+  }
+
+  /// Returns initial map centre: user GPS position if available,
+  /// otherwise the selected city centre, otherwise Larissa fallback.
+  LatLng _getInitialCentre() {
+    final pos = ref.read(locationProvider).currentPosition;
+    if (pos != null) {
+      return LatLng(pos.latitude, pos.longitude);
+    }
+    final def = ref.read(cityProvider).selectedDefinition;
+    if (def != null) {
+      return def.defaultCentre;
+    }
+    return AppConstants.defaultFallbackCentre;
+  }
+
+  double _getInitialZoom() {
+    final def = ref.read(cityProvider).selectedDefinition;
+    return def?.defaultZoom ?? AppConstants.defaultFallbackZoom;
   }
 
   Widget _buildBody(
@@ -274,8 +222,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     return FlutterMap(
         mapController: _mapController,
         options: MapOptions(
-          initialCenter: _defaultCentre,
-          initialZoom: _defaultZoom,
+          initialCenter: _getInitialCentre(),
+          initialZoom: _getInitialZoom(),
           minZoom: 3.0,
           maxZoom: 18.0,
         ),

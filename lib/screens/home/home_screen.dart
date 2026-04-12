@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../providers/city_provider.dart';
+import 'city_picker_sheet.dart';
+import '../debug/debug_screen.dart';
 import 'package:city_strides/screens/stats/stats_screen.dart';
 import 'package:city_strides/screens/map/map_screen.dart';
 import 'package:city_strides/screens/profile/profile_screen.dart';
@@ -22,7 +25,37 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final cityState = ref.watch(cityProvider);
+    final cityName = cityState.currentCity?.name ?? 'City Strides';
+
     return Scaffold(
+      appBar: _currentIndex == 1
+          ? AppBar(
+              title: GestureDetector(
+                onTap: () => _showCityPicker(context),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(cityName),
+                    const SizedBox(width: 4),
+                    const Icon(Icons.arrow_drop_down, size: 20),
+                  ],
+                ),
+              ),
+              backgroundColor: Theme.of(context).colorScheme.inversePrimary,
+              actions: [
+                IconButton(
+                  icon: const Icon(Icons.bug_report),
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const DebugScreen()),
+                    );
+                  },
+                ),
+              ],
+            )
+          : null,
       body: IndexedStack(
         index: _currentIndex,
         children: _screens,
@@ -49,6 +82,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           ),
         ],
       ),
+    );
+  }
+
+  void _showCityPicker(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      builder: (_) => const CityPickerSheet(),
     );
   }
 }

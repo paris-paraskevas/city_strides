@@ -10,6 +10,7 @@
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
+import 'settings_provider.dart';
 
 // --- State class ---
 // This holds everything the UI and other providers need to know about
@@ -49,8 +50,9 @@ class LocationState {
 
 // --- StateNotifier ---
 class LocationNotifier extends StateNotifier<LocationState> {
-  // Start with empty state - no position, not tracking, no errors.
-  LocationNotifier() : super(const LocationState());
+  final Ref _ref;
+
+  LocationNotifier(this._ref) : super(const LocationState());
 
   // _positionSubscription holds the GPS stream listener.
   // The underscore prefix (_) makes it private to this class - nothing
@@ -150,9 +152,10 @@ class LocationNotifier extends StateNotifier<LocationState> {
 
     // LocationSettings configures how often and how accurately we
     // receive GPS updates from the device.
-    const locationSettings = LocationSettings(
+    final settings = _ref.read(settingsProvider);
+    final locationSettings = LocationSettings(
       accuracy: LocationAccuracy.high,
-      distanceFilter: 5, // meters
+      distanceFilter: settings.distanceFilterMeters.round(),
     );
 
     // Geolocator.getPositionStream() return a Stream<Position>.
@@ -215,5 +218,5 @@ class LocationNotifier extends StateNotifier<LocationState> {
 //    ref.read(locationProvider.notifier).stopTracking();
 final locationProvider =
     StateNotifierProvider<LocationNotifier, LocationState> ((ref) {
-  return LocationNotifier();
+  return LocationNotifier(ref);
 });

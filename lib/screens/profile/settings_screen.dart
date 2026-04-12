@@ -16,6 +16,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../providers/auth_provider.dart';
 import '../../config/theme.dart';
+import '../../config/constants.dart';
 import '../../providers/settings_provider.dart';
 import '../../providers/tracking_provider.dart';
 
@@ -216,7 +217,7 @@ class SettingsScreen extends ConsumerWidget {
           const SizedBox(height: 24),
           Center(
             child: Text(
-              'City Strides v0.14.0',
+              'City Strides v${AppConstants.appVersion}',
               style: TextStyle(
                 fontSize: 13,
                 color: AppTheme.textMuted,

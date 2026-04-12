@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../providers/auth_provider.dart';
+import '../../config/constants.dart';
 import '../../providers/location_provider.dart';
 import '../../providers/city_provider.dart';
 import '../../providers/road_provider.dart';
@@ -73,29 +74,10 @@ class DebugScreen extends ConsumerWidget {
             // Uses the custom boundary approach: ring road streets + bbox
             ElevatedButton(
               onPressed: () {
-                ref.read(cityProvider.notifier).loadCustomCity(
-                  cityId: 'larissa_centre',
-                  name: 'Larissa Centre',
-                  country: 'Greece',
-                  streetNames: const [
-                    'Κίμωνος Σανδράκη',
-                    'Αθανασίου Λάγου',
-                    'Ηρώων Πολυτεχνείου',
-                  ],
-                  south: 39.625,
-                  west: 22.400,
-                  north: 39.650,
-                  east: 22.435,
-                );
-                ref.read(roadProvider.notifier).loadRoadsInBbox(
-                  cityId: 'larissa_centre',
-                  south: 39.625,
-                  west: 22.400,
-                  north: 39.650,
-                  east: 22.435,
-                );
+                final def = AppConstants.knownCities.first;
+                ref.read(cityProvider.notifier).loadFromDefinition(def);
               },
-              child: const Text('Load Larissa Centre Data'),
+              child: const Text('Load Default City Data'),
             ),
 
             const SizedBox(height: 12),

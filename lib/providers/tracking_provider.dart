@@ -19,16 +19,15 @@
 // where k is typically 10-30 nearby segments. This prevents UI freezing
 // with thousands of real road segments.
 
-import 'dart:math';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
 import '../models/walked_segment_model.dart';
 import '../models/road_segment_model.dart';
 import '../services/road_matching_service.dart';
 import 'location_provider.dart';
-import 'road_provider.dart';
 import '../services/storage_service.dart';
 import 'progress_provider.dart';
+import 'auth_provider.dart';
 
 // --- State class ---
 class TrackingState {
@@ -162,8 +161,7 @@ class TrackingNotifier extends StateNotifier<TrackingState> {
     // Skip if already walked — the Set makes this check fast
     if (state.walkedSegmentIds.contains(segmentId)) return;
 
-    // For now, hardcode 'local_user' to match auth_provider
-    const userId = 'local_user';
+    final userId = _ref.read(authProvider)?.userId ?? 'local_user';
 
     // Create the walk record
     final walkedSegment = WalkedSegmentModel(

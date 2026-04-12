@@ -14,6 +14,7 @@ import '../models/city_progress_model.dart';
 import 'tracking_provider.dart';
 import 'road_provider.dart';
 import 'city_provider.dart';
+import 'auth_provider.dart';
 
 // --- StateNotifier ---
 class ProgressNotifier extends StateNotifier<CityProgressModel?> {
@@ -88,7 +89,7 @@ class ProgressNotifier extends StateNotifier<CityProgressModel?> {
 
     // Update state with the new progress model
     state = CityProgressModel(
-      userId: 'local_user',
+      userId: _ref.read(authProvider)?.userId ?? 'local_user',
       cityId: cityState.currentCity!.cityId,
       segmentsWalked: segmentsWalked,
       totalSegments: totalSegments,
@@ -116,5 +117,12 @@ class ProgressNotifier extends StateNotifier<CityProgressModel?> {
 //   ref.read(progressProvider.notifier).recalculate();
 final progressProvider =
 StateNotifierProvider<ProgressNotifier, CityProgressModel?>((ref) {
-  return ProgressNotifier(ref);
+  final notifier = ProgressNotifier(ref);
+  // Auto-recalculate when walked segments change
+  ref.listen<TrackingState>(trackingProvider, (prev, next) {
+    if (prev?.walkedSegmentIds != next.walkedSegmentIds) {
+      notifier.recalculate();
+    }
+  });
+  return notifier;
 });
