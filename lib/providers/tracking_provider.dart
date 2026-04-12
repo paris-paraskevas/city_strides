@@ -27,6 +27,8 @@ import '../models/road_segment_model.dart';
 import '../services/road_matching_service.dart';
 import 'location_provider.dart';
 import 'road_provider.dart';
+import '../services/storage_service.dart';
+import 'progress_provider.dart';
 
 // --- State class ---
 class TrackingState {
@@ -83,6 +85,9 @@ class TrackingNotifier extends StateNotifier<TrackingState> {
   // The spatial grid service — lives here because tracking owns the
   // matching logic. One instance, reused across all GPS updates.
   final RoadMatchingService _matchingService = RoadMatchingService();
+
+  // Persistence service for saving/loading walked segments.
+  final StorageService _storageService = StorageService();
 
   TrackingNotifier(this._ref) : super(const TrackingState());
 
@@ -177,6 +182,26 @@ class TrackingNotifier extends StateNotifier<TrackingState> {
     state = state.copyWith(
       walkedSegmentIds: {...state.walkedSegmentIds, segmentId},
       walkedSegments: [...state.walkedSegments, walkedSegment],
+    );
+
+    // Persist to disk so data survives restarts
+    _storageService.saveWalkedSegments(cityId, state.walkedSegments);
+
+    // Update progress calculation
+    _ref.read(progressProvider.notifier).recalculate();
+  }
+
+  // --- Load persisted segments from disk ---
+  // Called on startup after roads load, to restore walked data
+  // from a previous session.
+  Future<void> loadPersistedSegments(String cityId) async {
+    final segments = await _storageService.loadWalkedSegments(cityId);
+    if (segments == null || segments.isEmpty) return;
+
+    final ids = segments.map((s) => s.segmentId).toSet();
+    state = state.copyWith(
+      walkedSegmentIds: ids,
+      walkedSegments: segments,
     );
   }
 

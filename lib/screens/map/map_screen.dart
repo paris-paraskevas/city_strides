@@ -25,6 +25,7 @@ import '../../providers/city_provider.dart';
 import '../../providers/road_provider.dart';
 import '../../providers/location_provider.dart';
 import '../../providers/tracking_provider.dart';
+import '../../providers/progress_provider.dart';
 import '../debug/debug_screen.dart';
 
 class MapScreen extends ConsumerStatefulWidget {
@@ -150,6 +151,33 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         ref.read(locationProvider.notifier).startTracking();
       }
     });
+
+    // Restore walked segments from disk once roads are available.
+    // We listen for roadProvider to finish loading, then load persisted
+    // data and recalculate progress.
+    _restoreWalkedData();
+  }
+
+  /// Loads previously walked segments from disk after roads are available.
+  void _restoreWalkedData() {
+    // If roads are already loaded, restore immediately
+    final roadState = ref.read(roadProvider);
+    if (roadState.segments.isNotEmpty && !roadState.isLoading) {
+      _loadAndRecalculate();
+      return;
+    }
+
+    // Otherwise wait for roads to finish loading
+    ref.listenManual<RoadState>(roadProvider, (previous, next) {
+      if (next.segments.isNotEmpty && !next.isLoading) {
+        _loadAndRecalculate();
+      }
+    });
+  }
+
+  Future<void> _loadAndRecalculate() async {
+    await ref.read(trackingProvider.notifier).loadPersistedSegments(_cityId);
+    ref.read(progressProvider.notifier).recalculate();
   }
 
   /// Wires GPS updates to the tracking provider for road matching.
